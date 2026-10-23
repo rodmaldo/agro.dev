@@ -74,7 +74,7 @@
     for (let i = 0; i < files.length; i++) {
       if (o.cancel && o.cancel.v) throw new Error('cancelado');
       const e = await AZGeo.exif(files[i].f);
-      if (e && isFinite(e.lat) && isFinite(e.lon)) { if (e.yaw == null) noYaw++; metas.push({ f: files[i].f, lat: e.lat, lon: e.lon, yaw: e.yaw, w: e.w, h: e.h, alt: e.relAlt }); } else skipped++;
+      if (e && isFinite(e.lat) && isFinite(e.lon)) { if (e.yaw == null) noYaw++; metas.push({ f: files[i].f, lat: e.lat, lon: e.lon, yaw: e.yaw, w: e.w, h: e.h, alt: e.relAlt, rtk: e.rtk }); } else skipped++;
       if (i % 20 === 0) prog(0.08 * i / files.length, 'Leyendo posiciones GPS · ' + (i + 1) + ' / ' + files.length);
     }
     if (!metas.length) throw new Error('las fotos no tienen coordenadas GPS');
@@ -86,6 +86,9 @@
     if (L.W * L.H > 16e6) throw new Error('el mosaico resultante es demasiado grande; bajá la calidad');
     let adj = null, stats = null, gain = null;
 
+    /* Con RTK las posiciones ya son precisas (centímetros): la alineación por contenido solo se acepta si es muy confiable y chica.
+       En suelo desnudo y parejo la correlación da picos débiles que moverían las fotos sin motivo. */
+    const rtkOpts = metas.filter(m => m.rtk === 50).length >= 0.8 * metas.length ? { minPsr: 14, maxShift: 1.0 } : {};
     if (metas.length >= 2 && !root.__NOALIGN) {
       /* 1) miniaturas en color para alinear */
       const TW = 192, ph = new Array(metas.length); let done = 0;
@@ -99,7 +102,7 @@
       }, o.cancel);
       /* 2) alineación global (las fotos ilegibles quedan fuera) */
       const ok = ph.map((p, i) => p ? i : -1).filter(i => i >= 0), sub = ok.map(i => ph[i]);
-      const A = await AZStitch.align(sub, { K, cancel: o.cancel, onProgress: p => prog(0.35 + 0.15 * p, 'Alineando fotos vecinas…') });
+      const A = await AZStitch.align(sub, Object.assign({ K, cancel: o.cancel, onProgress: p => prog(0.35 + 0.15 * p, 'Alineando fotos vecinas…') }, rtkOpts));
       adj = new Float64Array(2 * metas.length); gain = new Float64Array(3 * metas.length).fill(1);
       ok.forEach((i, k) => { adj[2 * i] = A.d[2 * k]; adj[2 * i + 1] = A.d[2 * k + 1]; for (let q = 0; q < 3; q++) gain[3 * i + q] = A.gain[3 * k + q]; });
       stats = A.stats;
