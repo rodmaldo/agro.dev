@@ -48,10 +48,12 @@
       g.imageSmoothingEnabled = false;
       const GW = gw * cs, GH = gh * cs, act = o.active ? S.hl.find(l => l.id === o.active) : null;
       if (act && o.heat && S.idx[act.idx]) g.drawImage(heat(S, act.idx), 0, 0, GW, GH);
-      if (M.buf.vis && M.buf.on && S.buf.length === gw * gh) g.drawImage(mask(S, 'buf', S.buf, M.buf.color, 0.6), 0, 0, GW, GH);
-      if (M.det.vis && S.det.length === gw * gh) g.drawImage(mask(S, 'det', S.det, M.det.color, 0.65), 0, 0, GW, GH);
-      if (S.man && M.man.vis) g.drawImage(mask(S, 'man', S.man, M.man.color, 0.65), 0, 0, GW, GH);
-      for (const l of S.hl) if (l.vis) g.drawImage(mask(S, 'h' + l.id, l.mask, l.color, 0.65), 0, 0, GW, GH);
+      for (const id of AZ.layerIds(S).slice().reverse()) {      // de abajo hacia arriba
+        if (id === 'buf') { if (M.buf.vis && M.buf.on && S.buf.length === gw * gh) g.drawImage(mask(S, 'buf', S.buf, M.buf.color, 0.6), 0, 0, GW, GH); }
+        else if (id === 'det') { if (M.det.vis && S.det.length === gw * gh) g.drawImage(mask(S, 'det', S.det, M.det.color, 0.65), 0, 0, GW, GH); }
+        else if (id === 'man') { if (S.man && M.man.vis) g.drawImage(mask(S, 'man', S.man, M.man.color, 0.65), 0, 0, GW, GH); }
+        else { const l = S.hl.find(q => q.id === id); if (l && l.vis) g.drawImage(mask(S, 'h' + l.id, l.mask, l.color, 0.65), 0, 0, GW, GH); }
+      }
       if (act && act.prev) g.drawImage(mask(S, 'prev', act.prev, '#ffffff', 0.45), 0, 0, GW, GH);
       if (S.poly.length >= 3) {
         g.save(); g.beginPath(); g.rect(-1e6, -1e6, 2e6, 2e6);

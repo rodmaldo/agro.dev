@@ -27,7 +27,7 @@
     S.pix = c.getContext('2d').getImageData(0, 0, S.W, S.H).data;
     S.ndvi = opt.ndvi || null; S.detailed = !!opt.detailed;
     S.poly = poly || [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]];
-    S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.rot = 0; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
+    S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.rot = 0; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.zord = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
   };
 
   AZ.prepare = function (S, gridM) {

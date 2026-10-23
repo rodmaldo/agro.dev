@@ -102,7 +102,7 @@
 
   root.AZUI.Dashboard = function Dashboard({ user, field, S, cfg, job, onLogout, onHome, onReconfig }) {
     const [rev, bump] = useReducer(x => x + 1, 0);
-    const [ui, setUi] = useState(() => ({ ...baseUi(), active: 'det', menu: null, ctx: null, dockL: true, dockR: true, exportOpen: false, help: false, yld: 3000 }));
+    const [ui, setUi] = useState(() => ({ ...baseUi(), active: 'det', sel: ['det'], drag: null, menu: null, ctx: null, dockL: true, dockR: true, exportOpen: false, help: false, yld: 3000 }));
     const uiR = useRef(ui); uiR.current = ui;
     const set = p => setUi(u => ({ ...u, ...p }));
     const [toast, toastEl] = useToast();
@@ -130,23 +130,34 @@
     const resetPoly = () => { S.poly = [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]]; polyChanged(); };
 
     /* ----- capas ----- */
-    const addHist = () => { const id = AZ.addHist(S); set({ active: id, tool: 'wand', heat: 1, ctx: null }); refresh(); toast('Capa de histograma: arrastrá las barras de umbral y usá la varita (Ctrl+clic suma, clic derecho borra)'); };
-    const addMan = () => { if (S.man) return toast('Ya existe una capa de detección manual'); AZ.addManual(S); set({ active: 'man', tool: 'brush', ctx: null }); refresh(); toast('Detección manual creada: pintá con el pincel'); };
-    const addBuf = () => { if (M.buf.on) return; M.buf.on = true; M.buf.m = M.buf.m || 2; M.buf.vis = true; AZ.calcBuf(S); set({ active: 'buf', ctx: null }); bump(); };
+    const addHist = () => { const id = AZ.addHist(S); set({ active: id, sel: [id], tool: 'wand', heat: 1, ctx: null }); refresh(); toast('Capa de histograma: arrastrá las barras de umbral y usá la varita (Ctrl+clic suma, clic derecho borra)'); };
+    const addMan = () => { if (S.man) return toast('Ya existe una capa de detección manual'); AZ.addManual(S); set({ active: 'man', sel: ['man'], tool: 'brush', ctx: null }); refresh(); toast('Detección manual creada: pintá con el pincel'); };
+    const addBuf = () => { if (M.buf.on) return; M.buf.on = true; M.buf.m = M.buf.m || 2; M.buf.vis = true; AZ.calcBuf(S); set({ active: 'buf', sel: ['buf'], ctx: null }); bump(); };
     const removeLayer = id => {
       if (id === 'buf') { M.buf.on = false; AZ.calcBuf(S); } else if (id === 'det') { return toast('La capa de detección principal no se elimina: usá el borrador'); } else AZ.removeLayer(S, id);
-      if (uiR.current.active === id) set({ active: 'det' }); refresh();
+      if (uiR.current.active === id) set({ active: 'det', sel: ['det'] }); else set({ sel: (uiR.current.sel || []).filter(x => x !== id) }); refresh();
     };
     const obj = id => id === 'det' ? M.det : id === 'man' ? M.man : id === 'buf' ? M.buf : S.hl.find(l => l.id === id);
+    const rowOf = id => id === 'det' ? { id, name: M.det.name, kind: 'det' } : id === 'man' ? { id, name: M.man.name, kind: 'man' } : id === 'buf' ? { id, name: 'Buffer · ' + f1(M.buf.m, 1) + ' m', kind: 'buf' } : { id, name: S.hl.find(l => l.id === id).name, kind: 'hist' };
     const rows = [
+      ...AZ.layerIds(S).map(rowOf),
       { id: 'ortho', name: 'Ortomosaico original', color: '#9aa39d', kind: 'img' },
-      { id: 'det', name: M.det.name, kind: 'det' }, ...(S.man ? [{ id: 'man', name: M.man.name, kind: 'man' }] : []),
-      ...S.hl.map(l => ({ id: l.id, name: l.name, kind: 'hist' })), ...(M.buf.on ? [{ id: 'buf', name: 'Buffer · ' + f1(M.buf.m, 1) + ' m', kind: 'buf' }] : []),
       { id: 'sat', name: 'Imagen satelital (referencia)', color: '#7aa6c9', kind: 'img' }
     ];
+    const sel = (ui.sel || []).filter(id => rows.some(r => r.id === id)), combinable = sel.filter(id => id === 'det' || id === 'man' || S.hl.some(l => l.id === id));
+    const pick = (r, e) => {
+      const heat = r.kind === 'hist' && ui.tool === 'wand' ? 1 : ui.heat;
+      if (e && (e.ctrlKey || e.metaKey)) { const has = sel.includes(r.id); set({ sel: has ? sel.filter(x => x !== r.id) : [...sel, r.id], active: has && ui.active === r.id ? (sel.filter(x => x !== r.id)[0] || 'det') : r.id, heat }); }
+      else set({ sel: [r.id], active: r.id, heat });
+    };
+    const combine = () => {
+      const r = AZ.combineLayers(S, combinable); if (!r) return toast('Seleccioná al menos 2 capas (Ctrl+clic) para combinar');
+      set({ active: r.target, sel: [r.target], ctx: null }); refresh(); toast('Combinadas: ' + r.names.join(' + '));
+    };
+    const drop = (toId) => { const d = uiR.current.drag; set({ drag: null, over: null }); if (!d || d === toId) return; AZ.moveLayer(S, d, toId); refresh(); };
     const visOf = r => r.kind === 'img' ? !!ui.vis[r.id] : obj(r.id).vis;
     const toggleVis = r => { if (r.kind === 'img') set({ vis: { ...ui.vis, [r.id]: ui.vis[r.id] ? 0 : 1 } }); else { obj(r.id).vis = !obj(r.id).vis; bump(); } };
-    const act = rows.find(r => r.id === ui.active) || rows[1], A = act.kind === 'img' ? null : obj(act.id);
+    const act = rows.find(r => r.id === ui.active) || rows.find(r => r.id === 'det'), A = act.kind === 'img' ? null : obj(act.id);
     const L = act.kind === 'hist' ? A : null;
 
     const st = useMemo(() => (S.gw ? AZ.stats(S) : null), [rev]);
@@ -165,7 +176,7 @@
 
     const items = {
       file: [{ t: 'Guardar proyecto', on: saveProject }, { t: 'Exportar prescripción / informe…', on: () => set({ exportOpen: true }) }, { sep: 1 }, { t: 'Reconfigurar grilla y puntos…', on: onReconfig }, { t: 'Cambiar de terreno', on: onHome }],
-      layers: [{ t: 'Capa de histograma', on: addHist }, { t: 'Detección manual', on: addMan, disabled: !!S.man }, { t: 'Buffer', on: addBuf, disabled: M.buf.on }],
+      layers: [{ t: 'Combinar capas seleccionadas', on: combine, disabled: combinable.length < 2 }, { sep: 1 }, { t: 'Capa de histograma', on: addHist }, { t: 'Detección manual', on: addMan, disabled: !!S.man }, { t: 'Buffer', on: addBuf, disabled: M.buf.on }],
       view: [{ t: 'Imagen satelital', checked: ui.vis.sat, on: () => set({ vis: { ...ui.vis, sat: ui.vis.sat ? 0 : 1 } }) }, { t: 'Grilla', checked: ui.vis.grid, on: () => set({ vis: { ...ui.vis, grid: ui.vis.grid ? 0 : 1 } }), k: 'Espacio' },
         { t: 'Antes / después', checked: ui.ba, on: () => set({ ba: !ui.ba }), k: 'I' }, { t: 'Ajustar vista', on: () => mapApi.current.fit() }, { sep: 1 },
         { t: 'Panel de herramientas', checked: ui.dockL, on: () => set({ dockL: !ui.dockL }) }, { t: 'Panel de resultados', checked: ui.dockR, on: () => set({ dockR: !ui.dockR }) }],
@@ -173,7 +184,7 @@
     };
     const setMenu = m => set({ menu: m });
     const api = { refresh, set, toast, closePoly, polyChanged, onPoint() { } };
-    const layerCtx = e => { e.preventDefault(); set({ ctx: { x: Math.min(e.clientX, innerWidth - 230), y: Math.max(10, Math.min(e.clientY, innerHeight - 140)) } }); };
+    const layerCtx = e => { e.preventDefault(); set({ ctx: { x: Math.min(e.clientX, innerWidth - 230), y: Math.max(10, Math.min(e.clientY, innerHeight - 170)) } }); };
 
     const hint = { pan: 'Arrastrá para mover · rueda para zoom', brush: 'Pintá celdas completas en la capa activa · clic derecho borra', erase: 'Borrá celdas de la capa activa',
       wand: 'Clic: seleccionar zona · Ctrl+clic: sumar · clic derecho: borrar zona', poly: 'Clic para cada vértice · doble clic o primer vértice para cerrar', edit: 'Arrastrá vértices · tocá un borde para agregar · Shift+clic quita' }[ui.tool];
@@ -238,7 +249,12 @@
             <div className="ph"><span>Capas</span><button className="btn sm" type="button" aria-label="Agregar capa" onClick=${e => { const r = e.currentTarget.getBoundingClientRect(); set({ ctx: { x: r.left, y: r.top - 118 } }); }}><${Ic} n="plus" s=${13}/> Capa</button></div>
             <div className="lrows">${rows.map(r => {
       const o = r.kind === 'img' ? null : obj(r.id), color = o ? o.color : r.color, on = visOf(r);
-      return html`<div key=${r.id} className=${'lrow2' + (ui.active === r.id ? ' act' : '')} onClick=${() => set({ active: r.id, heat: r.kind === 'hist' && ui.tool === 'wand' ? 1 : ui.heat })}>
+      const mov = r.kind !== 'img';
+      return html`<div key=${r.id} data-layer=${r.id} className=${'lrow2' + (ui.active === r.id ? ' act' : '') + (sel.includes(r.id) ? ' sel' : '') + (ui.over === r.id && ui.drag !== r.id ? ' over' : '')}
+          draggable=${mov} onDragStart=${e => { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', r.id); } catch (x) { } set({ drag: r.id }); }}
+          onDragOver=${e => { if (uiR.current.drag) { e.preventDefault(); if (uiR.current.over !== r.id) set({ over: r.id }); } }} onDrop=${e => { e.preventDefault(); drop(mov ? r.id : null); }} onDragEnd=${() => set({ drag: null, over: null })}
+          onClick=${e => pick(r, e)} onContextMenu=${() => { if (!sel.includes(r.id)) set({ sel: [r.id], active: r.id }); }}>
+          ${mov ? html`<span className="grip" aria-hidden="true" title="Arrastrá para cambiar el orden">⋮⋮</span>` : html`<span className="grip"></span>`}
           <button type="button" className="ic" aria-label=${on ? 'Ocultar' : 'Mostrar'} aria-pressed=${on} onClick=${e => { e.stopPropagation(); toggleVis(r); }}><${Ic} n=${on ? 'eye' : 'eyeoff'} s=${14}/></button>
           ${o ? html`<input type="color" className="sw" value=${color} aria-label=${'Color de ' + r.name} onClick=${e => e.stopPropagation()} onInput=${e => { o.color = e.target.value; S.ver++; bump(); }}/>` : html`<i className="sw" style=${{ background: color }}></i>`}
           ${ui.active === r.id && (r.kind === 'det' || r.kind === 'man' || r.kind === 'hist') ? html`<input type="text" className="nm" value=${o.name} maxLength="40" aria-label="Nombre de la capa" onClick=${e => e.stopPropagation()} onInput=${e => { o.name = e.target.value; bump(); }}/>` : html`<span className="nm">${r.name}</span>`}
@@ -247,6 +263,7 @@
           ${r.kind !== 'img' && r.kind !== 'det' ? html`<button type="button" className="ic" aria-label=${'Eliminar ' + r.name} onClick=${e => { e.stopPropagation(); removeLayer(r.id); }}><${Ic} n="trash" s=${13}/></button>` : html`<span className="ic"></span>`}
         </div>`;
     })}</div>
+            <div className="mu lhint">⋮⋮ ordenar · Ctrl+clic: varias · clic derecho: combinar</div>
           </div>
           <div className="capr">
             <div className="ph"><span>${act.name}</span><span className="mu">${act.kind === 'det' ? 'Detección IA' : act.kind === 'man' ? 'Detección manual' : act.kind === 'hist' ? 'Capa de histograma' : act.kind === 'buf' ? 'Buffer' : 'Imagen'}</span></div>
@@ -274,6 +291,7 @@
       </div>
 
       ${ui.ctx && html`<div className="md ctxm" role="menu" style=${{ position: 'fixed', left: ui.ctx.x, top: ui.ctx.y }}>
+        ${combinable.length >= 2 && html`<button type="button" className="mi" role="menuitem" onClick=${combine}><span className="ck"></span><span><b>Combinar ${combinable.length} capas</b></span><kbd></kbd></button>`}
         <button type="button" className="mi" role="menuitem" onClick=${addHist}><span className="ck"></span><span>Agregar capa de histograma</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" disabled=${!!S.man} onClick=${addMan}><span className="ck"></span><span>Agregar detección manual</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" disabled=${M.buf.on} onClick=${addBuf}><span className="ck"></span><span>Agregar buffer</span><kbd></kbd></button></div>`}
@@ -281,7 +299,7 @@
       ${ui.help && html`<div className="veil" onPointerDown=${e => { if (e.target === e.currentTarget) set({ help: false }); }}><div className="login" style=${{ width: 420 }} role="dialog" aria-label="Atajos"><h2>Atajos de teclado</h2>
         <div className="kv"><span>Mover</span><kbd>V</kbd></div><div className="kv"><span>Pincel / Borrador</span><kbd>B / E</kbd></div><div className="kv"><span>Varita mágica</span><kbd>W</kbd></div>
         <div className="kv"><span>Dibujar / editar límite</span><kbd>L / M</kbd></div><div className="kv"><span>Ocultar grilla mientras se mantiene</span><kbd>Espacio</kbd></div>
-        <div className="kv"><span>Comparar antes / después</span><kbd>I</kbd></div><div className="kv"><span>Varita: sumar / borrar zona</span><kbd>Ctrl+clic / clic derecho</kbd></div>
+        <div className="kv"><span>Comparar antes / después</span><kbd>I</kbd></div><div className="kv"><span>Varita: sumar / borrar zona</span><kbd>Ctrl+clic / clic derecho</kbd></div><div className="kv"><span>Capas: seleccionar varias</span><kbd>Ctrl+clic</kbd></div>
         <button className="btn" type="button" onClick=${() => set({ help: false })}>Cerrar</button></div></div>`}
       ${toastEl}
     </div>`;

@@ -70,6 +70,38 @@
     AZ.mchange(S);
   };
 
+
+  /* ---- orden de apilado (primero = más arriba) y combinación de varias capas ---- */
+  AZ.layerIds = function (S) {
+    const ex = [...S.hl.map(l => l.id).reverse(), ...(S.man ? ['man'] : []), 'det', ...(S.meta.buf.on ? ['buf'] : [])];
+    const z = (S.zord || []).filter(id => ex.includes(id)), fresh = ex.filter(id => !z.includes(id));
+    return [...fresh, ...z];
+  };
+  AZ.moveLayer = function (S, id, beforeId) {      // beforeId null = al final
+    const ids = AZ.layerIds(S).filter(x => x !== id), k = beforeId ? ids.indexOf(beforeId) : -1;
+    if (k < 0) ids.push(id); else ids.splice(k, 0, id);
+    S.zord = ids; S.ver++;
+  };
+  /* Combina capas (detección, manual, histograma) en una sola. Si entra la detección principal, el resultado queda en ella. */
+  AZ.combineLayers = function (S, ids) {
+    const ok = ids.filter(id => id === 'det' || id === 'man' || AZ.layerOf(S, id));
+    if (ok.length < 2) return null;
+    const n = NN(S), order = AZ.layerIds(S).filter(id => ok.includes(id)), target = ok.includes('det') ? 'det' : order[0];
+    const names = order.map(id => (id === 'det' ? S.meta.det : id === 'man' ? S.meta.man : AZ.layerOf(S, id)).name);
+    let cells = 0;
+    if (target === 'det') {
+      if (!S.badd || S.badd.length !== n) S.badd = new Uint8Array(n);
+      for (const id of ok) if (id !== 'det') { const m = AZ.maskOf(S, id); for (let i = 0; i < n; i++) if (m[i] && S.inside[i]) { S.badd[i] = 1; if (S.berase) S.berase[i] = 0; cells++; } }
+    } else {
+      const T = AZ.maskOf(S, target);
+      for (const id of ok) if (id !== target) { const m = AZ.maskOf(S, id); for (let i = 0; i < n; i++) if (m[i]) { T[i] = 1; cells++; } }
+      const o = target === 'man' ? S.meta.man : AZ.layerOf(S, target); o.name = (names.join(' + ').length <= 40 ? names.join(' + ') : names[0] + ' + ' + (names.length - 1) + ' capas').slice(0, 40); if (o.prev) o.prev = null;
+    }
+    for (const id of ok) if (id !== target) { if (id === 'man') { S.man = null; S.meta.man = null; } else { const k = S.hl.findIndex(l => l.id === id); if (k >= 0) S.hl.splice(k, 1); } }
+    if (target === 'det') AZ.mergeDet(S); else AZ.mchange(S);
+    return { target, cells, names };
+  };
+
   /* ---- pincel / borrador: pintan celdas completas (respetan el tamaño de la grilla). n = diámetro en celdas ---- */
   AZ.brush = function (S, id, ci, cj, n, val) {
     const m = AZ.maskOf(S, id); if (!m) return false;
