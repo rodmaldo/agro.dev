@@ -33,7 +33,7 @@ def main():
     print('odm balanced:', ' '.join(a)); print('odm max 2400 fotos:', ' '.join(b))
     # --- scan
     if flight:
-        d, pr = e.call('scan', folders=[flight]); print('scan', {k: (round(v, 3) if isinstance(v, float) else v) for k, v in d.items() if k != 'folders'})
+        d, pr = e.call('scan', folders=[flight]); print('scan', {k: (round(v, 3) if isinstance(v, float) else v) for k, v in d.items() if k not in ('folders', 'files', 'by_dir')})
         assert d['rgb'] > 0 and d['geotagged'] == d['rgb']
     # --- ortho sin docker -> error claro
     try:

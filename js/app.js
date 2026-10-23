@@ -7,12 +7,12 @@
   const newJob = () => ({ items: [], info: null, preset: null, base: null, note: '', presetDone: false });
   function initCfg(info, preset) {
     const c = {
-      kind: info.ms ? 'both' : 'rgb', source: info.ortho ? 'ortho' : (info.raw.length >= 2 ? 'mosaic' : 'sample'), ndvi: null, res: (info.alt && info.pw === 5280) ? (info.alt * 0.02685).toFixed(2) : '3', quality: 'media', detail: 'norm',
+      kind: info.ms ? 'both' : 'rgb', source: info.native ? 'mosaic' : info.ortho ? 'ortho' : (info.raw.length >= 2 ? 'mosaic' : 'sample'), ndvi: null, res: info.gsdCm ? info.gsdCm.toFixed(2) : (info.alt && info.pw === 5280) ? (info.alt * 0.02685).toFixed(2) : '3', quality: 'media', detail: 'norm',
       prec: info.rtk === 50 ? 'rtk' : 'gps', lat: info.gps ? +info.gps.lat.toFixed(6) : -33, lon: info.gps ? +info.gps.lon.toFixed(6) : -61,
-      gridM: 5, rot: 0, detName: 'Salitre', color: '#E69F00', sens: 50
+      outRes: 'orig', gridM: 5, rot: 0, detName: 'Salitre', color: '#E69F00', sens: 50
     };
     const p = preset && preset.cfg;
-    if (p) ['kind', 'gridM', 'rot', 'detName', 'color', 'sens', 'res', 'quality', 'detail', 'prec'].forEach(k => { if (p[k] != null) c[k] = p[k]; });
+    if (p) ['kind', 'gridM', 'rot', 'detName', 'color', 'sens', 'res', 'quality', 'detail', 'prec', 'outRes'].forEach(k => { if (p[k] != null) c[k] = p[k]; });
     return c;
   }
 

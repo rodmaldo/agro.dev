@@ -101,30 +101,40 @@ def walk_images(folders):
 
 
 def cmd_scan(args, job):
+    """Recorre carpetas (sin cargar imágenes): cantidad de fotos RGB/MS, GPS, altura, rumbo, RTK, tamaño del píxel y superficie aprox."""
+    import mosaic_gps
     folders = args['folders']
     rgb, ms, other = walk_images(folders)
+    by_dir = {}
+    for p in rgb: by_dir.setdefault(os.path.dirname(p), {'rgb': 0, 'ms': 0, 'otros': 0})['rgb'] += 1
+    for p in ms: by_dir.setdefault(os.path.dirname(p), {'rgb': 0, 'ms': 0, 'otros': 0})['ms'] += 1
+    nbytes = 0
+    for p in rgb + ms:
+        try: nbytes += os.path.getsize(p)
+        except OSError: pass
     metas, bad = [], 0
     for i, p in enumerate(rgb):
         try:
-            metas.append(read_meta(p))
+            m = mosaic_gps.parse_photo(p)
+            if m: metas.append(m)
         except Exception:
             bad += 1
         if i % 50 == 0:
             job.progress(i / max(1, len(rgb)), 'Leyendo %d/%d fotos' % (i, len(rgb)))
-    geo = [m for m in metas if m['lat'] is not None]
-    out = {'rgb': len(rgb), 'ms': len(ms), 'ignored': other, 'unreadable': bad, 'geotagged': len(geo), 'folders': folders}
-    if geo:
-        lat0 = sum(m['lat'] for m in geo) / len(geo)
-        lon0 = sum(m['lon'] for m in geo) / len(geo)
-        kx = 111320 * math.cos(math.radians(lat0))
-        xs = [(m['lon'] - lon0) * kx for m in geo]
-        ys = [(m['lat'] - lat0) * 110540 for m in geo]
-        alts = [m.get('rel_alt') for m in geo if m.get('rel_alt')]
-        alt = (sum(alts) / len(alts)) if alts else None
-        w0 = metas[0]['w']
-        gsd = alt * M3_GSD_PER_M * (5280.0 / w0) if alt else None
-        fw = (w0 * gsd / 100) if gsd else 0
-        out.update({'lat': lat0, 'lon': lon0, 'alt': alt, 'gsd_cm': gsd, 'model': metas[0]['model'], 'size': [w0, metas[0]['h']],
+    out = {'files': rgb, 'rgb': len(rgb), 'ms': len(ms), 'ignored': other, 'unreadable': bad, 'geotagged': len(metas), 'folders': folders,
+           'by_dir': by_dir, 'bytes': nbytes}
+    if metas:
+        fr = mosaic_gps.Frame(metas)
+        xs = [m['e'] for m in metas]; ys = [m['n'] for m in metas]
+        alts = [m['alt'] for m in metas if m['alt']]
+        gsd = float(sum(m['g'] for m in metas) / len(metas)) * 100          # cm/px
+        w0, h0 = metas[0]['w'], metas[0]['h']
+        fw = w0 * gsd / 100
+        # rumbo medio módulo 90° (las pasadas de ida y vuelta difieren 180°)
+        sx = sum(math.cos(math.radians(m['yaw'] * 4)) for m in metas); sy = sum(math.sin(math.radians(m['yaw'] * 4)) for m in metas)
+        yaw90 = (math.degrees(math.atan2(sy, sx)) / 4 + 360) % 90
+        out.update({'lat': fr.lat0, 'lon': fr.lon0, 'alt': (sum(alts) / len(alts)) if alts else None, 'gsd_cm': gsd, 'model': metas[0]['model'],
+                    'size': [w0, h0], 'yaw90': yaw90, 'rtk': 50 if all(m.get('rtk') == 50 for m in metas) else (0 if any(m.get('rtk') is not None for m in metas) else None),
                     'extent_m': [max(xs) - min(xs) + fw, max(ys) - min(ys) + fw]})
         out['area_ha'] = out['extent_m'][0] * out['extent_m'][1] / 1e4 * 0.75   # aprox. (el recorrido no es un rectángulo lleno)
     return out
@@ -379,6 +389,10 @@ class TileServer:
                     md = {'w': s.w, 'h': s.h, 'tile': TILE, 'levels': s.levels, 'mpp': s.mpp, 'bounds': s.bounds}
                     if isinstance(s, DirSource): md.update({k: v for k, v in s.meta.items() if k != 'poly_px'})
                     return self._send(200, json.dumps(md).encode(), 'application/json')
+                mc = re.match(r'^/cells/(\w+)$', p)
+                if mc:
+                    b = CELLS.get(mc.group(1))
+                    return self._send(200, b, 'application/octet-stream') if b else self._send(404, b'no')
                 m = re.match(r'^/tile/(\d+)/(\d+)/(\d+)\.(jpg|png)$', p)
                 if not m:
                     return self._send(404, b'no')
@@ -389,10 +403,8 @@ class TileServer:
                     f = outer.src.tile_file(z, x, y)
                     if not f:
                         return self._send(404, b'vacio')
-                    data = open(f, 'rb').read()
-                    if m.group(4) == 'png':
-                        bio = io.BytesIO(); Image.open(io.BytesIO(data)).save(bio, 'PNG'); return self._send(200, bio.getvalue(), 'image/png')
-                    return self._send(200, data, 'image/jpeg')
+                    with open(f, 'rb') as fh:
+                        return self._send(200, fh.read(), 'image/png' if f.endswith('.png') else 'image/jpeg')
                 b = tile_bytes(outer.src, z, x, y, outer.cache, 'PNG' if m.group(4) == 'png' else 'JPEG')
                 if b is None:
                     return self._send(404, b'vacio')
@@ -407,6 +419,7 @@ class TileServer:
 
 
 SERVERS = {}
+CELLS = {}
 
 
 def cmd_open_ortho(args, job):
@@ -452,8 +465,11 @@ class DirSource:
         self.mpp, self.bounds = self.meta.get('mpp'), None
 
     def tile_file(self, z, x, y):
-        f = os.path.join(self.dir, 'tiles', str(z), str(x), '%d.jpg' % y)
-        return f if os.path.exists(f) else None
+        b = os.path.join(self.dir, 'tiles', str(z), str(x), str(y))
+        for e in ('.jpg', '.png'):
+            if os.path.exists(b + e):
+                return b + e
+        return None
 
 
 def cmd_open_tiles(args, job):
@@ -465,10 +481,24 @@ def cmd_open_tiles(args, job):
     return dict(m, server=sid, url='http://127.0.0.1:%d' % ts.port, poly_px=src.meta.get('poly_px'))
 
 
+def cmd_cells(args, job):
+    """Características por celda sobre el ortomosaico a resolución original. args: server, spec{cs,W,H,mpp_v,theta,gw,gh}"""
+    import cells
+    ts = SERVERS.get(args['server'])
+    if not ts or not isinstance(ts.src, DirSource):
+        raise RuntimeError('Ortomosaico no abierto')
+    res = cells.compute(ts.src.dir, ts.src.meta, args['spec'], progress=job.progress, cancel=job.cancel.is_set)
+    cid = uuid.uuid4().hex[:8]
+    for k in list(CELLS)[:-1]:                   # solo se guarda el último (cada recálculo reemplaza al anterior)
+        CELLS.pop(k, None)
+    CELLS[cid] = cells.pack(res)
+    return {'id': cid, 'gw': res['gw'], 'gh': res['gh'], 'cover_ha': res['cover_ha'], 'level': res['level'], 'samples': res['samples']}
+
+
 # ----------------------------------------------------------------------------------------------- bucle principal
 
 COMMANDS = {'ping': lambda a, j: {'pong': True, 'python': sys.version.split()[0], 'docker': docker_ok(), 'rasterio': _has('rasterio')},
-            'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho, 'mosaic': cmd_mosaic, 'open_tiles': cmd_open_tiles}
+            'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho, 'mosaic': cmd_mosaic, 'open_tiles': cmd_open_tiles, 'cells': cmd_cells}
 
 
 def _has(mod):

@@ -19,8 +19,14 @@ T = 512
 GSD_PER_M = 0.02685 / 100          # m/px por metro de altura (Mavic 3M, 5280 px de ancho)
 CROP = 0.04                        # margen descartado de cada borde (fracción del lado corto)
 FEATHER = 0.14                     # ancho de la zona de mezcla
-KX0 = 111320.0
-KY = 110540.0
+
+
+def m_per_deg(lat):
+    """Metros por grado de latitud y de longitud (series WGS84). Con valores de ecuador el error llega a 0,2 % (2 m por km)."""
+    p = math.radians(lat)
+    ky = 111132.92 - 559.82 * math.cos(2 * p) + 1.175 * math.cos(4 * p) - 0.0023 * math.cos(6 * p)
+    kx = 111412.84 * math.cos(p) - 93.5 * math.cos(3 * p) + 0.118 * math.cos(5 * p)
+    return kx, ky
 
 
 # ----------------------------------------------------------------------------------------------- metadatos
@@ -48,7 +54,7 @@ def parse_photo(path):
         yaw = gy if gy is not None else (fy if fy is not None else 0.0)
         foc = num('CalibratedFocalLength')
         rtk = num('RtkFlag')
-        return {'path': path, 'lat': lat, 'lon': lon, 'alt': alt, 'yaw': yaw, 'w': w, 'h': h, 'rtk': rtk,
+        return {'path': path, 'model': str(ex.get(0x0110, '')).strip(), 'lat': lat, 'lon': lon, 'alt': alt, 'yaw': yaw, 'w': w, 'h': h, 'rtk': rtk,
                 'g': (alt / foc * (5280.0 / w) if (foc and alt) else (alt or 100.0) * GSD_PER_M * (5280.0 / w))}
 
 
@@ -59,13 +65,13 @@ class Frame:
     def __init__(self, photos):
         self.lat0 = sum(p['lat'] for p in photos) / len(photos)
         self.lon0 = sum(p['lon'] for p in photos) / len(photos)
-        self.kx = KX0 * math.cos(math.radians(self.lat0))
+        self.kx, self.ky = m_per_deg(self.lat0)
         for p in photos:
             p['e'] = (p['lon'] - self.lon0) * self.kx
-            p['n'] = (p['lat'] - self.lat0) * KY
+            p['n'] = (p['lat'] - self.lat0) * self.ky
 
     def to_latlon(self, e, n):
-        return self.lat0 + n / KY, self.lon0 + e / self.kx
+        return self.lat0 + n / self.ky, self.lon0 + e / self.kx
 
 
 def photo_matrix(p, E0, N1, g):
@@ -263,12 +269,26 @@ def render_band(args):
             x_a, x_b = tx * T, min(W, (tx + 1) * T)
             if y_b <= y_a or not ok[y_a:y_b, x_a:x_b].any():
                 continue
-            tile = np.zeros((T, T, 3), np.uint8)
-            tile[:y_b - y_a, :x_b - x_a] = arr[y_a:y_b, x_a:x_b]
             d = os.path.join(out_dir, 'tiles', str(top), str(tx)); os.makedirs(d, exist_ok=True)
-            Image.fromarray(tile).save(os.path.join(d, '%d.jpg' % ty), 'JPEG', quality=quality, subsampling=0)
+            okt = np.zeros((T, T), bool); okt[:y_b - y_a, :x_b - x_a] = ok[y_a:y_b, x_a:x_b]
+            if okt.all():
+                tile = arr[y_a:y_b, x_a:x_b]
+                Image.fromarray(tile).save(os.path.join(d, '%d.jpg' % ty), 'JPEG', quality=quality, subsampling=0)
+            else:                                   # borde del vuelo: PNG con transparencia (el satélite se ve por debajo)
+                tile = np.zeros((T, T, 4), np.uint8)
+                tile[:y_b - y_a, :x_b - x_a, :3] = arr[y_a:y_b, x_a:x_b]
+                tile[..., 3] = np.where(okt, 255, 0)
+                Image.fromarray(tile, 'RGBA').save(os.path.join(d, '%d.png' % ty), 'PNG', compress_level=3)
             n_tiles += 1
     return band, used, n_tiles
+
+
+def tile_path(out_dir, z, x, y):
+    b = os.path.join(out_dir, 'tiles', str(z), str(x), str(y))
+    for e in ('.jpg', '.png'):
+        if os.path.exists(b + e):
+            return b + e
+    return None
 
 
 def build_pyramid(out_dir, top, nx, ny, progress=None):
@@ -276,15 +296,25 @@ def build_pyramid(out_dir, top, nx, ny, progress=None):
         zx, zy = (nx + 2 ** (top - z) - 1) // 2 ** (top - z), (ny + 2 ** (top - z) - 1) // 2 ** (top - z)
         for ty in range(zy):
             for tx in range(zx):
-                cv = Image.new('RGB', (2 * T, 2 * T), (0, 0, 0)); any_ = False
+                cv = Image.new('RGBA', (2 * T, 2 * T), (0, 0, 0, 0)); any_ = False
                 for dy in range(2):
                     for dx in range(2):
-                        f = os.path.join(out_dir, 'tiles', str(z + 1), str(2 * tx + dx), '%d.jpg' % (2 * ty + dy))
-                        if os.path.exists(f):
-                            cv.paste(Image.open(f), (dx * T, dy * T)); any_ = True
+                        f = tile_path(out_dir, z + 1, 2 * tx + dx, 2 * ty + dy)
+                        if f:
+                            cv.paste(Image.open(f).convert('RGBA'), (dx * T, dy * T)); any_ = True
                 if any_:
+                    # promedio ponderado por transparencia (sin halos oscuros en los bordes)
+                    a = np.asarray(cv, np.float32); al = a[..., 3:4] / 255.0
+                    pm = np.concatenate([a[..., :3] * al, a[..., 3:4]], -1)
+                    pm = pm.reshape(T, 2, T, 2, 4).mean((1, 3))
+                    alpha = pm[..., 3:4]
+                    rgb = np.where(alpha > 1e-3, pm[..., :3] / np.maximum(alpha / 255.0, 1e-6), 0)
+                    out = np.concatenate([np.clip(rgb, 0, 255), alpha], -1).astype(np.uint8)
                     d = os.path.join(out_dir, 'tiles', str(z), str(tx)); os.makedirs(d, exist_ok=True)
-                    cv.resize((T, T), Image.BOX).save(os.path.join(d, '%d.jpg' % ty), 'JPEG', quality=90)
+                    if (out[..., 3] > 250).all():
+                        Image.fromarray(out[..., :3]).save(os.path.join(d, '%d.jpg' % ty), 'JPEG', quality=90)
+                    else:
+                        Image.fromarray(out, 'RGBA').save(os.path.join(d, '%d.png' % ty), 'PNG', compress_level=3)
         if progress:
             progress((top - z) / max(1, top))
 
@@ -338,7 +368,9 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
             if progress: progress(0.12 + 0.78 * done / len(jobs), 'Armando mosaico %d/%d' % (done, len(jobs)))
             if cancel and cancel(): raise RuntimeError('Cancelado')
     else:
-        with ProcessPoolExecutor(max_workers=workers) as ex:
+        import multiprocessing
+        # 'spawn': el motor tiene hilos (lectura de comandos, servidor HTTP) y 'fork' puede trabarse; 'spawn' es además lo único que existe en Windows
+        with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn')) as ex:
             futs = [ex.submit(render_band, j) for j in jobs]
             for f in as_completed(futs):
                 r = f.result(); done += 1; ntiles += r[2]
@@ -350,7 +382,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     build_pyramid(out_dir, top, nx, ny, lambda f: progress and progress(0.92 + 0.07 * f, 'Generando vistas reducidas'))
     hl = hull(corners)
     poly = [[(c[0] - E0) / g, (N1 - c[1]) / g] for c in hull([c for q in P for c in footprint(q, 0.96)])]
-    meta = {'w': W, 'h': H, 'tile': T, 'levels': levels, 'mpp': g, 'E0': E0, 'N1': N1, 'lat0': fr.lat0, 'lon0': fr.lon0, 'kx': fr.kx, 'ky': KY,
+    meta = {'w': W, 'h': H, 'tile': T, 'levels': levels, 'mpp': g, 'E0': E0, 'N1': N1, 'lat0': fr.lat0, 'lon0': fr.lon0, 'kx': fr.kx, 'ky': fr.ky,
             'photos': len(P), 'tiles': ntiles, 'poly_px': poly, 'cover_ha': 0, 'seconds': round(time.time() - t0, 1),
             'rtk': sum(1 for q in P if q.get('rtk') == 50), 'alt': float(np.median([q['alt'] or 0 for q in P])), 'quality': quality,
             'vignette': [float(prof[0, 1]), float(prof[-1, 1])], 'gain_range': [float(gains.min()), float(gains.max())]}

@@ -26,13 +26,12 @@ function startEngine() {
   engine.on('exit', code => { for (const p of pending.values()) p.resolve({ error: 'El motor se cerró (código ' + code + ')' }); pending.clear(); engine = null; });
 }
 
-function call(cmd, args) {
+let internalId = 0;
+function call(id, cmd, args) {
   if (!engine) startEngine();
   return new Promise(resolve => {
-    const id = nextId++; pending.set(id, { resolve });
-    // el id se envía a la web con el primer evento; para cancelar, la web usa el id que recibe en 'engine:event'
+    pending.set(id, { resolve });
     engine.stdin.write(JSON.stringify({ id, cmd, args }) + '\n');
-    if (win && !win.isDestroyed()) win.webContents.send('engine:event', { id, type: 'started', cmd });
   });
 }
 
@@ -53,8 +52,8 @@ ipcMain.handle('app:workdir', () => workdir());
 ipcMain.handle('app:system', () => ({ platform: process.platform, arch: process.arch, cpus: os.cpus().length, cpuModel: (os.cpus()[0] || {}).model, ramGB: Math.round(os.totalmem() / 2 ** 30) }));
 ipcMain.handle('dialog:folders', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí una o varias carpetas del vuelo', properties: ['openDirectory', 'multiSelections'] }); return r.canceled ? [] : r.filePaths; });
 ipcMain.handle('dialog:files', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí archivos', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff'] }] }); return r.canceled ? [] : r.filePaths; });
-ipcMain.handle('engine:call', (_e, cmd, args) => call(cmd, args));
-ipcMain.handle('engine:cancel', (_e, id) => call('cancel', { target: id }));
+ipcMain.handle('engine:call', (_e, id, cmd, args) => call(id, cmd, args));
+ipcMain.handle('engine:cancel', (_e, id) => call(--internalId, 'cancel', { target: id }));   // ids negativos: llamadas internas
 ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));
 
 const lock = app.requestSingleInstanceLock();

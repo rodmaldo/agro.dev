@@ -63,6 +63,17 @@
       try { const j = JSON.parse(await f.text()); if (!j || j.format !== 'agro.dev/project') throw 0; importPreset(j); } catch (x) { setMsg('Ese archivo no es un proyecto de agro.dev.'); }
     };
     const info = job.info, ok = info && (info.raw.length > 0 || info.ortho);
+    const native = AZDesktop.available;
+    /* escritorio: las carpetas se eligen con el diálogo del sistema y se leen desde el disco (sin subir nada, sin límite de memoria) */
+    const [scanMsg, setScanMsg] = useState('');
+    const scanNative = async folders => {
+      if (!folders.length) { setJob(j => ({ ...j, folders: [], info: null })); return; }
+      setBusy(true); setMsg('');
+      try { const inf = await AZDesktop.scan(folders, (p, m) => setScanMsg(m)); setJob(j => ({ ...j, folders, items: [], info: inf })); }
+      catch (e) { setMsg('No se pudieron leer las carpetas: ' + e.message); }
+      setBusy(false); setScanMsg('');
+    };
+    const addFolders = async () => { const f = await AZDesktop.pickFolders(); if (f && f.length) scanNative([...new Set([...(job.folders || []), ...f])]); };
 
     return html`<div className="screen">
       <${Head} user=${user} onLogout=${onLogout} back=${onBack} title=${field.name}/>
@@ -80,7 +91,14 @@
 
         <section className="hcard grow2">
           <h2>Imágenes del vuelo</h2>
-          <div className=${'drop' + (over ? ' over' : '')} onDragOver=${e => { e.preventDefault(); setOver(true); }} onDragLeave=${() => setOver(false)}
+          ${native && html`<div className="drop">
+            <div className="row"><button className="btn pri" type="button" onClick=${addFolders} disabled=${busy}><${Ic} n="folder" s=${14}/> ${(job.folders || []).length ? 'Agregar otra carpeta' : 'Elegir carpetas del vuelo'}</button>
+              ${(job.folders || []).length > 0 && html`<button className="btn fx" type="button" onClick=${() => scanNative([])}>Vaciar</button>`}</div>
+            <span className="mu">${busy ? (scanMsg || 'Leyendo carpetas…') : 'Elegí una o varias carpetas (podés seleccionar varias a la vez). Las fotos se leen directamente desde tu disco, con su calidad original; no se suben a ningún lado.'}</span>
+            ${(job.folders || []).length > 0 && html`<ul className="flds">${job.folders.map(f => html`<li key=${f}><span className="fopen"><b>${f.split(/[\\/]/).filter(Boolean).pop()}</b><span className="mu">${f}</span></span>
+              <button type="button" className="lnk" aria-label="Quitar carpeta" onClick=${() => scanNative(job.folders.filter(x => x !== f))}><${Ic} n="trash" s=${14}/></button></li>`)}</ul>`}
+          </div>`}
+          ${!native && html`<div className=${'drop' + (over ? ' over' : '')} onDragOver=${e => { e.preventDefault(); setOver(true); }} onDragLeave=${() => setOver(false)}
             onDrop=${async e => { e.preventDefault(); setOver(false); setBusy(true); const arr = await AZFiles.readDrop(e.dataTransfer); take(arr); }}>
             <div className="row"><button className="btn pri" type="button" onClick=${() => dirR.current.click()}><${Ic} n="folder" s=${14}/> ${job.items.length ? 'Agregar otra carpeta' : 'Subir carpeta'}</button>
               <button className="btn" type="button" onClick=${() => filR.current.click()}><${Ic} n="files" s=${14}/> Subir archivos</button>
@@ -88,9 +106,11 @@
             <span className="mu">${busy ? 'Leyendo archivos…' : 'Cada selección se suma a la anterior: agregá todas las carpetas del vuelo (100MEDIA, 101MEDIA…) o la carpeta madre. También podés arrastrarlas acá.'}</span>
             <input ref=${dirR} type="file" webkitdirectory="" directory="" multiple hidden onChange=${fromInput}/>
             <input ref=${filR} type="file" multiple accept="image/*,.tif,.tiff" hidden onChange=${fromInput}/>
-          </div>
+          </div>`}
           ${info && html`<div className="kv-box">
             <div className="kv"><span>Archivos cargados</span><span>${info.n} · ${f1(info.mb, 0)} MB · ${info.folders.length} carpeta(s)</span></div>
+            ${info.native && info.gsdCm && html`<div className="kv"><span>Resolución original</span><span>${f1(info.gsdCm, 2)} cm/px · ${info.model || ''}${info.rtk === 50 ? ' · RTK' : ''}</span></div>
+            <div className="kv"><span>Superficie aproximada</span><span>${f1(info.areaHa, 0)} ha</span></div>`}
             <div className="kv"><span>Fotos RGB (_D.JPG)</span><span><b>${info.raw.length}</b></span></div>
             <div className="kv"><span>Bandas multiespectrales (_MS_*.TIF)</span><span>${info.ms}</span></div>
             <div className="kv"><span>Ortomosaico JPG/PNG</span><span>${info.ortho ? info.ortho.f.name : '—'}</span></div>

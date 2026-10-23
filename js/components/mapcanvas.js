@@ -45,7 +45,7 @@
 
     const down = e => {
       const u = uiR.current, p = pos(e), w = toImg(p), r = 10 / view.current.z, t = u.tool;
-      if (e.button === 1 || t === 'pan' || !S.orth) { drag.current = { t: 'pan', sx: p[0], sy: p[1], vx: view.current.x, vy: view.current.y }; cv.current.setPointerCapture(e.pointerId); return; }
+      if (e.button === 1 || t === 'pan' || !(S.orth || S.tiled)) { drag.current = { t: 'pan', sx: p[0], sy: p[1], vx: view.current.x, vy: view.current.y }; cv.current.setPointerCapture(e.pointerId); return; }
       if (!S.gw && t !== 'poly' && t !== 'edit') return;
       if (t === 'padd' || t === 'pneg') {
         if (e.button === 2) return;
@@ -107,7 +107,7 @@
     return html`<div className="stage" ref=${wrap} style=${{ gridArea: 's' }}>
       <canvas ref=${cv} aria-label="Mapa del lote" style=${{ cursor: cur }} onContextMenu=${e => e.preventDefault()}
         onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerLeave=${leave} onDoubleClick=${() => { if (ui.tool === 'poly' && S.tmp.length >= 4) { S.tmp.pop(); api.closePoly(); } }}></canvas>
-      ${ui.ba && S.orth && html`<div className="ba" style=${{ left: ui.baPos * 100 + '%' }}>
+      ${ui.ba && (S.orth || S.tiled) && html`<div className="ba" style=${{ left: ui.baPos * 100 + '%' }}>
         <span className="ba-l l">ANTES · ORTOMOSAICO</span><span className="ba-l r">DESPUÉS · DETECCIÓN</span>
         <div className="ba-hit" role="slider" aria-label="Divisor antes y después" aria-valuemin="3" aria-valuemax="97" aria-valuenow=${Math.round(ui.baPos * 100)} tabIndex="0"
           onPointerDown=${bdown} onPointerMove=${bmove} onPointerUp=${() => { bd.current = false; }}

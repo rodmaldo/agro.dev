@@ -65,9 +65,12 @@
     const okOnly = (fn) => { if (!valid) return toast('Ingresá una dosis mayor que 0'); try { fn(); } catch (e) { toast('No se pudo exportar: ' + e.message); } };
     const prescription = () => okOnly(() => { const z = AZ.X.prescriptionZip(S, o); AZFiles.download(z.name, z.bytes, 'application/zip'); toast('Prescripción exportada: ' + z.n.toLocaleString('es-AR') + ' polígonos'); });
     const geo = () => okOnly(() => AZFiles.download('agro-dev_' + field.name.replace(/\W+/g, '_') + '.geojson', JSON.stringify(AZ.X.geojson(S, o)), 'application/geo+json'));
-    const report = () => okOnly(() => {
+    const report = () => okOnly(async () => {
       const w = 1400, z = w / S.W, cv = document.createElement('canvas'); cv.width = w; cv.height = Math.round(S.H * z);
-      AZMap.paint(cv, S, { x: 0, y: 0, z }, { vis: { sat: 0, ortho: 1, grid: 0, lim: 1 }, orthOp: 100, satOp: 100, gridOp: 0, gridHeld: false, ba: false, baPos: 0.5, tool: 'pan', mouse: null, active: null, heat: 0, brushN: 1 }, false, () => { });
+      const po = { vis: { sat: 0, ortho: 1, grid: 0, lim: 1 }, orthOp: 100, satOp: 100, gridOp: 0, gridHeld: false, ba: false, baPos: 0.5, tool: 'pan', mouse: null, active: null, heat: 0, brushN: 1 };
+      AZMap.paint(cv, S, { x: 0, y: 0, z }, po, false, () => { });
+      if (S.tiled) for (let i = 0; i < 40 && AZMap.pending() > 0; i++) { await new Promise(r => setTimeout(r, 150)); AZMap.paint(cv, S, { x: 0, y: 0, z }, po, false, () => { }); }   // esperar los mosaicos del ortomosaico
+      if (S.tiled) { await new Promise(r => setTimeout(r, 200)); AZMap.paint(cv, S, { x: 0, y: 0, z }, po, false, () => { }); }
       const h = AZ.X.reportHtml(S, { ...o, img: cv.toDataURL('image/jpeg', 0.85) }).replace('</body>', '<script>setTimeout(function(){print()},500)<\/script></body>');
       const url = URL.createObjectURL(new Blob([h], { type: 'text/html' })), win = window.open(url, '_blank');
       if (!win) { AZFiles.download('informe_' + field.name.replace(/\W+/g, '_') + '.html', h, 'text/html'); toast('El navegador bloqueó la ventana: se descargó el informe (abrilo e imprimí → Guardar como PDF)'); }

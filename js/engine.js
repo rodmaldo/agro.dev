@@ -15,6 +15,8 @@
     hasDet: false, idxName: 'exg', dist: null, _dv: -1,
     geo: { lat: -33, lon: -61, rtk: false }, ver: 0, _oc: null
   });
+  /* metros por grado de latitud (ky) y de longitud (kx), series WGS84 */
+  AZ.mPerDeg = lat => { const p = lat * Math.PI / 180; return { ky: 111132.92 - 559.82 * Math.cos(2 * p) + 1.175 * Math.cos(4 * p) - 0.0023 * Math.cos(6 * p), kx: 111412.84 * Math.cos(p) - 93.5 * Math.cos(3 * p) + 0.118 * Math.cos(5 * p) }; };
   AZ.touch = S => { S.ver++; };
   AZ.cellM = S => S.cs * S.mpp;
   AZ.cellHa = S => { const m = S.cs * S.mpp; return m * m / 1e4; };
@@ -30,17 +32,60 @@
     S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.rot = 0; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.zord = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
   };
 
-  AZ.prepare = function (S, gridM) {
+  /* tamaño de celda en píxeles de análisis y cantidad de celdas (máx. 4 millones) */
+  function gridSize(S, gridM) {
     S.cs = Math.max(1, gridM / S.mpp);
     let gw = Math.ceil(S.W / S.cs), gh = Math.ceil(S.H / S.cs);
     S.capped = false;
     while (gw * gh > 4e6) { S.capped = true; S.cs *= 1.25; gw = Math.ceil(S.W / S.cs); gh = Math.ceil(S.H / S.cs); }
     S.gw = gw; S.gh = gh;
-    feats(S); AZ.calcInside(S); AZ.calcLims(S);
+  }
+  AZ.prepare = function (S, gridM) {
+    gridSize(S, gridM);
+    feats(S); finishPrep(S);
+  };
+  function finishPrep(S) {
+    const { gw, gh } = S;
+    AZ.calcInside(S); AZ.calcLims(S);
     const N = gw * gh;
     S.det = new Uint8Array(N); S.buf = new Uint8Array(N); S.man = S.man ? new Uint8Array(N) : null;
     for (const l of S.hl) { l.mask = new Uint8Array(N); l.prev = null; l.range = null; }
     S.hasDet = false; S.dist = null; S._dv = -1; S.auto = null; S.badd = null; S.berase = null; S.pts = []; S.mver++; S.ver++;
+  }
+
+  /* ---- modo por mosaicos (versión de escritorio): el ortomosaico no se carga entero; las celdas las calcula el motor Python sobre los píxeles originales ----
+     T: {url, levels, tile, w0, h0 (px nativos), g (m/px nativo), mppV (m/px del marco de análisis)} */
+  AZ.setTiled = function (S, T, poly, opt) {
+    opt = opt || {};
+    S.tiled = T; S.orth = null; S.pix = null; S.ndvi = null; S.detailed = !!opt.detailed; S.mpp = T.mppV;
+    S.rot = 0; AZ.tiledFrame(S, 0);
+    S.poly = poly || [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]];
+    S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.zord = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
+  };
+  /* tamaño del marco de análisis (el mosaico girado −rot°, igual que rotateCanvas) */
+  AZ.tiledFrame = function (S, rot) {
+    const T = S.tiled, t = (rot || 0) * Math.PI / 180, co = Math.abs(Math.cos(t)), si = Math.abs(Math.sin(t)), k = T.g / T.mppV;
+    S.W = Math.ceil((T.w0 * co + T.h0 * si) * k); S.H = Math.ceil((T.w0 * si + T.h0 * co) * k); S.rot = rot || 0;
+  };
+  /* polígono en píxeles nativos -> marco de análisis */
+  AZ.tiledPoly = function (S, polyNative, rot) {
+    const T = S.tiled, k = T.g / T.mppV;
+    const q = polyNative.map(p => [p[0] * k, p[1] * k]);
+    return rot ? AZ.rotPts(q, rot, T.w0 * k, T.h0 * k, S.W, S.H) : q;
+  };
+  AZ.prepareGrid = function (S, gridM) { gridSize(S, gridM); };
+  AZ.cellSpec = S => ({ cs: S.cs, W: S.W, H: S.H, mpp_v: S.mpp, theta: S.rot || 0, gw: S.gw, gh: S.gh });
+  /* buf: ArrayBuffer del motor ('AZC1', gw, gh, cover_ha, n[u32], sr, sg, sb, sq[f32]) */
+  AZ.applyCells = function (S, buf, detailed) {
+    const dv = new DataView(buf); if (String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)) !== 'AZC1') throw new Error('respuesta del motor inválida');
+    const gw = dv.getUint32(4, true), gh = dv.getUint32(8, true), cover = dv.getFloat64(12, true), N = gw * gh;
+    if (gw !== S.gw || gh !== S.gh) throw new Error('la grilla del motor no coincide (' + gw + '×' + gh + ' vs ' + S.gw + '×' + S.gh + ')');
+    let o = 20; const n = new Uint32Array(buf.slice(o, o + 4 * N)); o += 4 * N;
+    const f = () => { const a = new Float32Array(buf.slice(o, o + 4 * N)); o += 4 * N; return a; };
+    const sr = f(), sg = f(), sb = f(), sq = f();
+    S.detailed = !!detailed;
+    finalizeFeats(S, { sr, sg, sb, sq, sn: null, n, cov: cover * 1e4 / (S.mpp * S.mpp) });
+    finishPrep(S);
   };
 
   function feats(S) {
@@ -58,7 +103,12 @@
         n[c]++;
       }
     }
-    S.covPx = cov;
+    finalizeFeats(S, { sr, sg, sb, sq, sn, n, cov });
+  }
+
+  function finalizeFeats(S, A) {
+    const { gw, gh } = S, N = gw * gh, { sr, sg, sb, sq, sn, n } = A;
+    S.covPx = A.cov;
     const tex = S.detailed, D = 5 + (tex ? 1 : 0) + (sn ? 1 : 0); S.D = D;
     const F = new Float32Array(N * D), E = new Float32Array(N), B = new Float32Array(N), Sa = new Float32Array(N);
     const Nd = sn ? new Float32Array(N) : null;
@@ -172,7 +222,8 @@
   AZ.pxToGeo = function (S, x, y) {
     const th = (S.rot || 0) * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th), dx = x - S.W / 2, dy = y - S.H / 2;
     const xo = dx * c - dy * sn, yo = dx * sn + dy * c, { lat, lon } = S.geo;
-    return { lat: lat - (yo * S.mpp) / 110574, lon: lon + (xo * S.mpp) / (111320 * Math.cos(lat * Math.PI / 180)) };
+    const m = AZ.mPerDeg(lat);
+    return { lat: lat - (yo * S.mpp) / m.ky, lon: lon + (xo * S.mpp) / m.kx };
   };
   /* puntos del mosaico original -> imagen rotada (rot° en sentido antihorario para alinear la grilla) */
   AZ.rotPts = function (pts, deg, w0, h0, w1, h1) {

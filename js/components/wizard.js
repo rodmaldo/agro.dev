@@ -33,6 +33,13 @@
     const process = async () => {
       cancel.current = { v: false }; setProg({ pct: 0, msg: 'Leyendo posiciones GPS…' });
       try {
+        if (info.native) {                       // escritorio: ortomosaico a resolución original + celdas calculadas por el motor
+          const base = await AZDesktop.buildBase({ files: info.raw, name: field.name, outRes: cfg.outRes === 'orig' ? null : +cfg.outRes, rtk: cfg.prec === 'rtk' }, (pct, msg) => setProg({ pct, msg }), cancel.current);
+          job.base = base; job.note = base.note;
+          await AZFiles.applyTiled(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det', (p, m) => setProg({ pct: 0.92 + 0.08 * p, msg: m }), cancel.current);
+          setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
+          return;
+        }
         const o = { source: cfg.source, items: info.raw, file: cfg.source === 'ortho' ? info.ortho.f : cfg.source === 'sample' ? sampleFile() : null, ndvi: cfg.kind !== 'rgb' && cfg.source !== 'mosaic' ? cfg.ndvi : null, res: +cfg.res, quality: cfg.quality, lat: +cfg.lat, lon: +cfg.lon, rtk: cfg.prec === 'rtk' };
         const base = await AZFiles.buildBase(o, (pct, msg) => setProg({ pct, msg }), cancel.current);
         job.base = base; job.note = base.note;
@@ -41,14 +48,18 @@
         setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
       } catch (e) { setProg(null); toast(e.message === 'cancelado' ? 'Proceso cancelado' : 'No se pudo procesar: ' + e.message); }
     };
-    const canProcess = info && (cfg.source === 'mosaic' ? info.raw.length >= 2 && info.geoPhotos > 0 : cfg.source === 'ortho' ? !!info.ortho : info.raw.length > 0) && !(cfg.kind === 'ms' && cfg.source === 'mosaic' && !info.raw.length)
-      && isFinite(+cfg.lat) && isFinite(+cfg.lon) && Math.abs(+cfg.lat) <= 90 && Math.abs(+cfg.lon) <= 180 && +cfg.res > 0;
+    const canProcess = info && (info.native ? info.raw.length >= 2 && info.geoPhotos > 0 : cfg.source === 'mosaic' ? info.raw.length >= 2 && info.geoPhotos > 0 : cfg.source === 'ortho' ? !!info.ortho : info.raw.length > 0) && !(cfg.kind === 'ms' && cfg.source === 'mosaic' && !info.raw.length)
+      && (info.native || (isFinite(+cfg.lat) && isFinite(+cfg.lon) && Math.abs(+cfg.lat) <= 90 && Math.abs(+cfg.lon) <= 180 && +cfg.res > 0));
     const needIdx = cfg.kind === 'ms' && !cfg.ndvi;
 
     /* ---------- paso 2: grilla y orientación ---------- */
     const reapply = (gridM, rot, fit) => {
       setCalc(true);
-      setTimeout(() => { try { AZFiles.apply(S, job.base, gridM, rot, cfg.detail === 'det'); } catch (e) { toast('No se pudo recalcular: ' + e.message); } setCalc(false); bump(); if (fit) mapApi.current.fit(); }, 30);
+      setTimeout(async () => {
+        try { if (job.base.tiled) await AZFiles.applyTiled(S, job.base, gridM, rot, cfg.detail === 'det'); else AZFiles.apply(S, job.base, gridM, rot, cfg.detail === 'det'); }
+        catch (e) { toast('No se pudo recalcular: ' + e.message); }
+        setCalc(false); bump(); if (fit) mapApi.current.fit();
+      }, 30);
     };
     const onGrid = v => { up({ gridM: v }); reapply(v, cfg.rot, false); };
     const onRot = v => { v = Math.max(-90, Math.min(90, +v || 0)); up({ rot: v }); reapply(cfg.gridM, v, true); };
@@ -110,7 +121,8 @@
         </section>
         <section className="hcard">
           <h2>Cómo armar el mapa</h2>
-          ${info && html`<${Seg} value=${cfg.source} onChange=${v => up({ source: v })} opts=${[...(info.ortho ? [['ortho', 'Ortomosaico']] : []), ['mosaic', 'Vuelo completo (fotos GPS)'], ['sample', 'Una foto']]}/>
+          ${info && info.native && html`<div className="note">Se arma el ortomosaico del lote completo a partir de las ${info.raw.length} fotos (${info.geoPhotos} con GPS), en el motor de escritorio, a la resolución original (${f1(info.gsdCm, 2)} cm/px) o a la que elijas abajo. Se corrige el viñeteo de la lente, se igualan las exposiciones y se mezclan los bordes. Las fotos se ubican por su posición ${cfg.prec === 'rtk' ? 'RTK (centímetros)' : 'GPS'}, rumbo y altura: sirve para terreno plano.</div>`}
+          ${info && !info.native && html`<${Seg} value=${cfg.source} onChange=${v => up({ source: v })} opts=${[...(info.ortho ? [['ortho', 'Ortomosaico']] : []), ['mosaic', 'Vuelo completo (fotos GPS)'], ['sample', 'Una foto']]}/>
             ${cfg.source === 'mosaic' && html`<div className="note">Se arma el lote completo ubicando cada foto por su GPS y rumbo (${info.raw.length} fotos, ${info.geoPhotos ? 'con GPS' : 'sin GPS detectado'}). Es una composición aproximada, no fotogrametría: sirve para ver, delimitar y zonificar. Para la entrega final usá un ortomosaico real.</div>`}
             ${cfg.source === 'sample' && html`<div className="note w">Carga solo la foto RGB más grande: es una vista parcial del vuelo, no el lote completo.</div>`}
             ${cfg.source === 'ortho' && html`<div className="note">Se usa el ortomosaico exportado: ${info.ortho && info.ortho.f.name}.</div>`}
@@ -120,12 +132,15 @@
         <section className="hcard adv">
           <h2>Parámetros avanzados</h2>
           <div className="g2">
-            <label className="fld"><span className="fl">Resolución del píxel (cm/px)<b>${f1((+cfg.res) * (+cfg.res), 1)} cm²/px</b></span><input type="number" min="0.5" step="0.01" value=${cfg.res} onInput=${e => up({ res: e.target.value })}/>${info && info.alt != null && info.pw === 5280 ? html`<span className="mu">Estimada por la altura de vuelo (${f1(info.alt, 0)} m): ${f1(info.alt * 0.02685, 2)} cm/px. Si el tamaño de las fotos no coincide, ajustalo.</span>` : null}</label>
-            <label className="fld"><span className="fl">Calidad de relevamiento</span><select value=${cfg.quality} onChange=${e => up({ quality: e.target.value })}><option value="baja">Baja · hasta 1600 px</option><option value="media">Media · hasta 3200 px</option><option value="alta">Alta · hasta 6000 px</option></select></label>
+            ${info && info.native && html`<label className="fld"><span className="fl">Resolución del ortomosaico</span><select value=${cfg.outRes} onChange=${e => up({ outRes: e.target.value })}>
+              <option value="orig">Original · ${f1(info.gsdCm, 2)} cm/px (máxima calidad)</option><option value="5">5 cm/px</option><option value="10">10 cm/px (rápido)</option></select>
+              <span className="mu">La grilla y la detección se calculan siempre sobre los píxeles del ortomosaico. Con "Original" no se pierde detalle.</span></label>`}
+            ${!(info && info.native) && html`<label className="fld"><span className="fl">Resolución del píxel (cm/px)<b>${f1((+cfg.res) * (+cfg.res), 1)} cm²/px</b></span><input type="number" min="0.5" step="0.01" value=${cfg.res} onInput=${e => up({ res: e.target.value })}/>${info && info.alt != null && info.pw === 5280 ? html`<span className="mu">Estimada por la altura de vuelo (${f1(info.alt, 0)} m): ${f1(info.alt * 0.02685, 2)} cm/px. Si el tamaño de las fotos no coincide, ajustalo.</span>` : null}</label>`}
+            ${!(info && info.native) && html`<label className="fld"><span className="fl">Calidad de relevamiento</span><select value=${cfg.quality} onChange=${e => up({ quality: e.target.value })}><option value="baja">Baja · hasta 1600 px</option><option value="media">Media · hasta 3200 px</option><option value="alta">Alta · hasta 6000 px</option></select></label>`}
             <div className="fld"><span className="fl">Procesado</span><${Seg} value=${cfg.detail} onChange=${v => up({ detail: v })} opts=${[['norm', 'Normal'], ['det', 'Detallado']]}/></div>
             <div className="fld"><span className="fl">Posicionamiento</span><${Seg} value=${cfg.prec} onChange=${v => up({ prec: v })} opts=${[['gps', 'GPS'], ['rtk', 'RTK']]}/></div>
-            <label className="fld"><span className="fl">Latitud del centro</span><input type="number" step="0.000001" value=${cfg.lat} onInput=${e => up({ lat: e.target.value })}/></label>
-            <label className="fld"><span className="fl">Longitud del centro</span><input type="number" step="0.000001" value=${cfg.lon} onInput=${e => up({ lon: e.target.value })}/></label>
+            ${!(info && info.native) && html`<label className="fld"><span className="fl">Latitud del centro</span><input type="number" step="0.000001" value=${cfg.lat} onInput=${e => up({ lat: e.target.value })}/></label>
+            <label className="fld"><span className="fl">Longitud del centro</span><input type="number" step="0.000001" value=${cfg.lon} onInput=${e => up({ lon: e.target.value })}/></label>`}
           </div>
           <span className="mu">Detallado agrega textura del suelo al análisis. Precisión esperada: ${cfg.prec === 'rtk' ? '±2–5 cm (RTK fijo)' : '±1–3 m (GPS estándar)'}. Con "Vuelo completo" el centro se calcula solo desde las fotos.</span>
         </section></div></main>`}

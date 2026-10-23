@@ -23,6 +23,45 @@
     for (let i = 0; i < a.length; i++) if (S.inside[i] && S.valid[i]) { const [r, g, b] = cmap((a[i] - lo) / (hi - lo)); const k = i * 4; d[k] = r; d[k + 1] = g; d[k + 2] = b; d[k + 3] = 190; }
   });
 
+  /* ---- ortomosaico por mosaicos (escritorio): se dibujan solo los mosaicos visibles, al nivel de detalle que pide el zoom ---- */
+  const TC = new Map(); let pend = 0;
+  AZMap.pending = () => pend;
+  AZMap.hasImage = S => !!(S.orth || S.tiled);
+  function tileImg(T, z, x, y, redraw) {
+    const key = T.url + '|' + z + '|' + x + '|' + y; let e = TC.get(key);
+    if (e) { TC.delete(key); TC.set(key, e); return e; }          // más reciente al final (LRU)
+    e = { state: 'load', img: new Image() }; pend++;
+    e.img.onload = () => { e.state = 'ok'; pend--; redraw && redraw(); };
+    e.img.onerror = () => { e.state = 'none'; pend--; };             // mosaico vacío (fuera del vuelo)
+    e.img.src = T.url + '/tile/' + z + '/' + x + '/' + y + '.jpg';
+    TC.set(key, e);
+    if (TC.size > 700) { let n = 0; for (const k of TC.keys()) { if (TC.get(k).state !== 'load') TC.delete(k); if (++n > 150) break; } }
+    return e;
+  }
+  function drawTiled(g, S, c, redraw) {
+    const T = S.tiled, k = T.g / T.mppV, t = (S.rot || 0) * Math.PI / 180, co = Math.cos(t), si = Math.sin(t), cxn = T.w0 / 2, cyn = T.h0 / 2, top = T.levels - 1, TS = T.tile;
+    g.save();
+    g.transform(k * co, -k * si, k * si, k * co, S.W / 2 - k * (co * cxn + si * cyn), S.H / 2 - k * (-si * cxn + co * cyn));
+    const M = g.getTransform(), inv = M.inverse(), sc = Math.hypot(M.a, M.b);       // píxeles de pantalla por píxel nativo
+    const pts = [[0, 0], [c.width, 0], [c.width, c.height], [0, c.height]].map(p => inv.transformPoint(new DOMPoint(p[0], p[1])));
+    const x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(...pts.map(p => p.x)), y0 = Math.min(...pts.map(p => p.y)), y1 = Math.max(...pts.map(p => p.y));
+    const kl = Math.max(0, Math.min(top, Math.floor(Math.log2(1 / Math.max(sc, 1e-6))))), z = top - kl, span = TS * Math.pow(2, kl);
+    const nx = Math.ceil(T.w0 / span), ny = Math.ceil(T.h0 / span), e = 0.5 * Math.pow(2, kl);   // solape para evitar líneas entre mosaicos
+    const ta = Math.max(0, Math.floor(x0 / span)), tb = Math.min(nx - 1, Math.floor(x1 / span)), tc = Math.max(0, Math.floor(y0 / span)), td = Math.min(ny - 1, Math.floor(y1 / span));
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    if ((tb - ta + 1) * (td - tc + 1) > 400) { g.restore(); return; }
+    for (let ty = tc; ty <= td; ty++) for (let tx = ta; tx <= tb; tx++) {
+      const en = tileImg(T, z, tx, ty, redraw);
+      if (en.state === 'ok') { g.drawImage(en.img, tx * span - e, ty * span - e, span + 2 * e, span + 2 * e); continue; }
+      if (en.state === 'none') continue;
+      for (let j = 1; j <= z; j++) {                                  // mientras carga: usar la vista más gruesa que ya esté lista
+        const a = TC.get(T.url + '|' + (z - j) + '|' + (tx >> j) + '|' + (ty >> j));
+        if (a && a.state === 'ok') { const f = TS / (1 << j), sx = (tx & ((1 << j) - 1)) * f, sy = (ty & ((1 << j) - 1)) * f; g.drawImage(a.img, sx, sy, f, f, tx * span, ty * span, span, span); break; }
+      }
+    }
+    g.restore();
+  }
+
   AZMap.fit = function (S, w, h) {
     const z = Math.min(w / S.W, h / S.H) * 0.94;
     return { z, x: (w - S.W * z) / 2, y: (h - S.H * z) / 2 };
@@ -38,7 +77,8 @@
 
     if (o.vis.sat) { g.globalAlpha = o.satOp / 100; AZGeo.drawTiles(g, S, v, c.width, c.height, redraw); g.globalAlpha = 1; }
     if (S.orth && o.vis.ortho) { g.globalAlpha = o.orthOp / 100; g.imageSmoothingEnabled = true; g.drawImage(S.orth, 0, 0); g.globalAlpha = 1; }
-    if (!S.orth) return;
+    else if (S.tiled && o.vis.ortho) { g.globalAlpha = o.orthOp / 100; drawTiled(g, S, c, redraw); g.globalAlpha = 1; }
+    if (!S.orth && !S.tiled) return;
 
     /* Antes / después: a la izquierda del divisor queda el ortomosaico limpio; a la derecha, las capas de análisis */
     if (gw) {

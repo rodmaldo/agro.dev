@@ -7,7 +7,8 @@
   const AZMosaic = {};
   root.AZMosaic = AZMosaic;
   if (typeof module !== 'undefined') module.exports = AZMosaic;
-  const KY = 110574;
+  /* metros por grado (series WGS84): con 110574 fijo (valor de ecuador) el norte-sur salía 0,2 % corto a 27° de latitud (2 m por km) */
+  const mDeg = lat => { const p = lat * Math.PI / 180; return { ky: 111132.92 - 559.82 * Math.cos(2 * p) + 1.175 * Math.cos(4 * p) - 0.0023 * Math.cos(6 * p), kx: 111412.84 * Math.cos(p) - 93.5 * Math.cos(3 * p) + 0.118 * Math.cos(5 * p) }; };
 
   function hull(pts) {                                   // envolvente convexa (monotone chain)
     const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -23,7 +24,7 @@
     if (!metas.length) throw new Error('No hay fotos con GPS');
     let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
     for (const m of metas) { a = Math.min(a, m.lat); b = Math.max(b, m.lat); c = Math.min(c, m.lon); d = Math.max(d, m.lon); }
-    const lat0 = (a + b) / 2, lon0 = (c + d) / 2, KX = 111320 * Math.cos(lat0 * Math.PI / 180);
+    const lat0 = (a + b) / 2, lon0 = (c + d) / 2, { kx: KX, ky: KY } = mDeg(lat0);
     const P = metas.map((m, i) => ({ e: (m.lon - lon0) * KX + (o.adj ? o.adj[2 * i] : 0), n: (m.lat - lat0) * KY + (o.adj ? o.adj[2 * i + 1] : 0), rot: m.yaw || 0, fw: (m.w || 5280) * o.res * (m.scale || 1), fh: (m.h || 3956) * o.res * (m.scale || 1) }));
     const corners = [], K = o.crop || 1;   // K: fracción central de cada foto que realmente se usa
     let e0 = 1e12, e1 = -1e12, n0 = 1e12, n1 = -1e12;
