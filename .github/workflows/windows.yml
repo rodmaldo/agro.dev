@@ -1,0 +1,32 @@
+name: Windows (instalador + portable)
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Motor Python (dependencias + prueba)
+        run: |
+          python -m pip install -r engine/requirements.txt
+          python engine/test_engine.py
+      - name: Motor Python -> agro_engine.exe (PyInstaller, carpeta)
+        run: |
+          pyinstaller --noconfirm --onedir --name agro_engine --collect-all rasterio --distpath engine-build engine/agro_engine.py
+          New-Item -ItemType Directory -Force desktop/engine-dist | Out-Null
+          Copy-Item engine-build/agro_engine/* desktop/engine-dist -Recurse -Force
+      - name: Electron -> setup.exe + portable.exe
+        working-directory: desktop
+        run: |
+          npm install
+          npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agro.dev-windows
+          path: |
+            desktop/release/*.exe

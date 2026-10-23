@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+"""agro.dev · motor de procesado (Python).
+
+Se comunica con la ventana de escritorio (Electron) por líneas JSON:
+  entrada  (stdin) : {"id": 1, "cmd": "scan", "args": {...}}
+  salida   (stdout): {"id": 1, "type": "progress", "pct": 0.4, "msg": "..."}
+                     {"id": 1, "type": "result",   "data": {...}}
+                     {"id": 1, "type": "error",    "error": "..."}
+
+Comandos: ping, scan, ortho, cancel, open_ortho (abre un ortomosaico y lo sirve por HTTP local, por mosaicos
+bajo demanda, a la resolución original), close_ortho.
+
+Diseño:
+  * Las fotos NO se cargan en memoria: scan lee solo el EXIF.
+  * El ortomosaico lo arma ODM (OpenDroneMap) dentro de Docker. Un lote de 400+ ha a 3 cm/px tiene decenas de miles de
+    millones de píxeles: no se puede tener en un canvas ni en RAM, por eso se lee por ventanas (rasterio) y se sirve
+    en mosaicos de 512 px. Los niveles de zoom salen de las vistas reducidas (overviews) del GeoTIFF.
+"""
+import json, os, re, shutil, subprocess, sys, threading, time, uuid, io, math
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections import OrderedDict
+
+import numpy as np
+from PIL import Image, ExifTags
+
+Image.MAX_IMAGE_PIXELS = None
+RGB_EXT = {'.jpg', '.jpeg'}
+MS_RE = re.compile(r'_MS_(G|R|RE|NIR)\.TIF$', re.I)
+TILE = 512
+M3_GSD_PER_M = 0.02685      # cm/px por metro de altura (Mavic 3M RGB, 5280 px de ancho)
+
+# ----------------------------------------------------------------------------------------------- salida
+
+_out_lock = threading.Lock()
+
+
+def emit(obj):
+    with _out_lock:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
+        sys.stdout.flush()
+
+
+# ----------------------------------------------------------------------------------------------- scan
+
+def _rat(v):
+    try:
+        return float(v)
+    except Exception:
+        return float(v[0]) / float(v[1]) if v[1] else 0.0
+
+
+def _dms(t, ref):
+    d = _rat(t[0]) + _rat(t[1]) / 60 + _rat(t[2]) / 3600
+    return -d if ref in ('S', 'W') else d
+
+
+def read_meta(path):
+    """EXIF mínimo de una foto: lat, lon, altura relativa (si existe), ancho/alto, modelo."""
+    with Image.open(path) as im:
+        w, h = im.size
+        ex = im.getexif()
+        gps = ex.get_ifd(0x8825) if ex else {}
+        exif = ex.get_ifd(0x8769) if ex else {}
+        m = {'path': path, 'w': w, 'h': h, 'model': str(ex.get(0x0110, '')).strip(), 'lat': None, 'lon': None, 'alt': None}
+        if gps.get(2) and gps.get(4):
+            m['lat'] = _dms(gps[2], gps.get(1, 'N'))
+            m['lon'] = _dms(gps[4], gps.get(3, 'E'))
+        if gps.get(6) is not None:
+            m['alt'] = _rat(gps[6])
+        # DJI guarda la altura relativa de vuelo en el XMP
+        try:
+            xmp = im.info.get('xmp') or b''
+            if isinstance(xmp, str):
+                xmp = xmp.encode('utf8', 'ignore')
+            mm = re.search(rb'RelativeAltitude="?([+-]?[0-9.]+)', xmp)
+            if mm:
+                m['rel_alt'] = float(mm.group(1))
+        except Exception:
+            pass
+        return m
+
+
+def walk_images(folders):
+    rgb, ms, other = [], [], 0
+    seen = set()
+    for f in folders:
+        for root, _, files in os.walk(f):
+            for n in files:
+                p = os.path.join(root, n)
+                if p in seen:
+                    continue
+                seen.add(p)
+                ext = os.path.splitext(n)[1].lower()
+                if ext in RGB_EXT:
+                    rgb.append(p)
+                elif MS_RE.search(n):
+                    ms.append(p)
+                else:
+                    other += 1
+    return sorted(rgb), sorted(ms), other
+
+
+def cmd_scan(args, job):
+    folders = args['folders']
+    rgb, ms, other = walk_images(folders)
+    metas, bad = [], 0
+    for i, p in enumerate(rgb):
+        try:
+            metas.append(read_meta(p))
+        except Exception:
+            bad += 1
+        if i % 50 == 0:
+            job.progress(i / max(1, len(rgb)), 'Leyendo %d/%d fotos' % (i, len(rgb)))
+    geo = [m for m in metas if m['lat'] is not None]
+    out = {'rgb': len(rgb), 'ms': len(ms), 'ignored': other, 'unreadable': bad, 'geotagged': len(geo), 'folders': folders}
+    if geo:
+        lat0 = sum(m['lat'] for m in geo) / len(geo)
+        lon0 = sum(m['lon'] for m in geo) / len(geo)
+        kx = 111320 * math.cos(math.radians(lat0))
+        xs = [(m['lon'] - lon0) * kx for m in geo]
+        ys = [(m['lat'] - lat0) * 110540 for m in geo]
+        alts = [m.get('rel_alt') for m in geo if m.get('rel_alt')]
+        alt = (sum(alts) / len(alts)) if alts else None
+        w0 = metas[0]['w']
+        gsd = alt * M3_GSD_PER_M * (5280.0 / w0) if alt else None
+        fw = (w0 * gsd / 100) if gsd else 0
+        out.update({'lat': lat0, 'lon': lon0, 'alt': alt, 'gsd_cm': gsd, 'model': metas[0]['model'], 'size': [w0, metas[0]['h']],
+                    'extent_m': [max(xs) - min(xs) + fw, max(ys) - min(ys) + fw]})
+        out['area_ha'] = out['extent_m'][0] * out['extent_m'][1] / 1e4 * 0.75   # aprox. (el recorrido no es un rectángulo lleno)
+    return out
+
+
+# ----------------------------------------------------------------------------------------------- ODM
+
+# Fracción aproximada del proceso al terminar cada etapa de ODM
+ODM_STAGES = [('dataset', .02), ('split', .04), ('merge', .05), ('opensfm', .45), ('openmvs', .55), ('odm_filterpoints', .58),
+              ('odm_meshing', .62), ('mvs_texturing', .70), ('odm_georeferencing', .74), ('odm_dem', .82), ('odm_orthophoto', .96),
+              ('odm_report', .98), ('odm_postprocess', 1.0)]
+
+# Perfiles. Para lotes agrícolas planos alcanza con el modo "fast-orthophoto" (no arma el modelo 3D completo).
+QUALITY = {
+    'fast':     {'feature-quality': 'low',    'res_mult': 2.0, 'neighbors': 8},
+    'balanced': {'feature-quality': 'medium', 'res_mult': 1.0, 'neighbors': 12},
+    'max':      {'feature-quality': 'high',   'res_mult': 1.0, 'neighbors': 16},
+}
+
+
+def odm_args(quality, gsd_cm, n_photos, cpu=None, split_after=800):
+    q = QUALITY.get(quality, QUALITY['balanced'])
+    a = ['--fast-orthophoto', '--feature-quality', q['feature-quality'], '--matcher-neighbors', str(q['neighbors']),
+         '--orthophoto-resolution', '%.2f' % max(1.0, (gsd_cm or 3.0) * q['res_mult']),
+         '--cog', '--orthophoto-compression', 'DEFLATE', '--build-overviews', '--skip-report']
+    if n_photos > split_after:                 # lotes grandes: ODM los parte en bloques y los une al final
+        a += ['--split', str(max(300, n_photos // 4)), '--split-overlap', '60']
+    if cpu:
+        a += ['--max-concurrency', str(int(cpu))]
+    return a
+
+
+def link_or_copy(src, dst):
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+class Job:
+    def __init__(self, mid):
+        self.mid = mid
+        self.cancel = threading.Event()
+        self.proc = None
+        self.container = None
+
+    def progress(self, pct, msg=''):
+        emit({'id': self.mid, 'type': 'progress', 'pct': round(float(pct), 4), 'msg': msg})
+
+
+JOBS = {}
+
+
+def docker_ok():
+    try:
+        r = subprocess.run(['docker', 'info'], capture_output=True, timeout=20)
+        return r.returncode == 0
+    except Exception as e:
+        return False
+
+
+def cmd_ortho(args, job):
+    """Arma el ortomosaico RGB con ODM (Docker). args: folders, out, quality, gsd_cm, gpu, cpu"""
+    if not docker_ok():
+        raise RuntimeError('Docker no está disponible. Instalá Docker Desktop (con WSL2), abrilo y volvé a intentar.')
+    rgb, _, _ = walk_images(args['folders'])
+    if len(rgb) < 3:
+        raise RuntimeError('Hacen falta al menos 3 fotos RGB (.JPG). Encontradas: %d' % len(rgb))
+    out = os.path.abspath(args['out'])
+    proj = os.path.join(out, 'odm')
+    imgs = os.path.join(proj, 'images')
+    os.makedirs(imgs, exist_ok=True)
+    job.progress(0.0, 'Preparando %d fotos' % len(rgb))
+    names = set()
+    for i, p in enumerate(rgb):
+        n = os.path.basename(p)
+        if n in names:                          # carpetas distintas con el mismo nombre de archivo
+            n = '%d_%s' % (i, n)
+        names.add(n)
+        d = os.path.join(imgs, n)
+        if not os.path.exists(d):
+            link_or_copy(p, d)
+        if job.cancel.is_set():
+            raise RuntimeError('Cancelado')
+    flags = odm_args(args.get('quality', 'balanced'), args.get('gsd_cm'), len(rgb), args.get('cpu'))
+    image = 'opendronemap/odm:gpu' if args.get('gpu') else 'opendronemap/odm'
+    job.container = 'agro-odm-' + uuid.uuid4().hex[:8]
+    cmd = ['docker', 'run', '--rm', '--name', job.container, '-v', '%s:/datasets/code' % proj.replace('\\', '/')]
+    if args.get('gpu'):
+        cmd += ['--gpus', 'all']
+    cmd += [image, '--project-path', '/datasets', 'code'] + flags
+    emit({'id': job.mid, 'type': 'log', 'msg': ' '.join(cmd)})
+    job.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
+    last = 0.0
+    tail = []
+    for line in job.proc.stdout:
+        line = line.rstrip()
+        tail = (tail + [line])[-30:]
+        m = re.search(r'Running (\w+) stage', line)
+        if m:
+            for k, (nm, f) in enumerate(ODM_STAGES):
+                if nm == m.group(1):
+                    last = ODM_STAGES[k - 1][1] if k else 0.0
+                    job.progress(last, 'ODM: ' + nm)
+        elif line.strip():
+            emit({'id': job.mid, 'type': 'log', 'msg': line[:300]})
+        if job.cancel.is_set():
+            break
+    rc = job.proc.wait()
+    if job.cancel.is_set():
+        raise RuntimeError('Cancelado')
+    tif = os.path.join(proj, 'odm_orthophoto', 'odm_orthophoto.tif')
+    if rc != 0 or not os.path.exists(tif):
+        raise RuntimeError('ODM terminó con error (%s). Últimas líneas:\n%s' % (rc, '\n'.join(tail[-8:])))
+    job.progress(1.0, 'Ortomosaico listo')
+    return {'orthophoto': tif, 'photos': len(rgb), 'flags': flags}
+
+
+def cmd_cancel(args, job):
+    j = JOBS.get(args['target'])
+    if not j:
+        return {'cancelled': False}
+    j.cancel.set()
+    if j.container:
+        subprocess.run(['docker', 'stop', j.container], capture_output=True, timeout=60)
+    return {'cancelled': True}
+
+
+# ----------------------------------------------------------------------------------------------- lectura por mosaicos
+
+class ArraySource:
+    """Fuente en memoria (imágenes comunes PNG/JPG y pruebas)."""
+    def __init__(self, arr):
+        self.arr = arr
+        self.h, self.w = arr.shape[:2]
+        self.levels = max(1, int(math.ceil(math.log2(max(self.w, self.h) / TILE))) + 1)
+        self.mpp = None
+        self.bounds = None
+
+    def read(self, x, y, w, h, out_w, out_h):
+        """Lee el rectángulo (x,y,w,h) en píxeles nativos y lo devuelve como RGB uint8 de out_h × out_w."""
+        x0, y0, x1, y1 = max(0, x), max(0, y), min(self.w, x + w), min(self.h, y + h)
+        if x1 <= x0 or y1 <= y0:
+            return None
+        crop = Image.fromarray(self.arr[y0:y1, x0:x1, :3])
+        ow, oh = max(1, round(out_w * (x1 - x0) / w)), max(1, round(out_h * (y1 - y0) / h))
+        crop = crop.resize((ow, oh), Image.LANCZOS if ow < (x1 - x0) else Image.BILINEAR)
+        canvas = Image.new('RGB', (out_w, out_h), (0, 0, 0))
+        canvas.paste(crop, (round(out_w * (x0 - x) / w), round(out_h * (y0 - y) / h)))
+        return canvas
+
+
+class RasterSource:
+    """GeoTIFF grande: lee por ventanas con rasterio (usa las vistas reducidas internas, no carga la imagen entera)."""
+    def __init__(self, path):
+        import rasterio
+        self.rio = rasterio
+        self.ds = rasterio.open(path)
+        self.w, self.h = self.ds.width, self.ds.height
+        self.levels = max(1, int(math.ceil(math.log2(max(self.w, self.h) / TILE))) + 1)
+        t = self.ds.transform
+        self.mpp = abs(t.a) if self.ds.crs and self.ds.crs.is_projected else None
+        self.bounds = list(self.ds.bounds)
+        self.crs = str(self.ds.crs) if self.ds.crs else None
+        self.lock = threading.Lock()
+        self.bands = [1, 2, 3] if self.ds.count >= 3 else [1, 1, 1]
+        self.alpha = 4 if self.ds.count >= 4 else None
+
+    def read(self, x, y, w, h, out_w, out_h):
+        from rasterio.windows import Window
+        win = Window(x, y, w, h)
+        with self.lock:
+            d = self.ds.read(self.bands, window=win, out_shape=(3, out_h, out_w), boundless=True, fill_value=0, resampling=self.rio.enums.Resampling.average)
+        return Image.fromarray(np.moveaxis(d, 0, -1).astype(np.uint8))
+
+
+def open_source(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in ('.tif', '.tiff'):
+        try:
+            return RasterSource(path)
+        except ImportError:
+            pass                                 # sin rasterio: intenta con PIL (solo sirve para TIFF chicos)
+    with Image.open(path) as im:
+        arr = np.asarray(im.convert('RGB'))
+    return ArraySource(arr)
+
+
+class TileCache:
+    def __init__(self, n=512):
+        self.n, self.d, self.l = n, OrderedDict(), threading.Lock()
+
+    def get(self, k):
+        with self.l:
+            v = self.d.get(k)
+            if v is not None:
+                self.d.move_to_end(k)
+            return v
+
+    def put(self, k, v):
+        with self.l:
+            self.d[k] = v
+            while len(self.d) > self.n:
+                self.d.popitem(last=False)
+
+
+def tile_bytes(src, z, tx, ty, cache=None, fmt='JPEG'):
+    """z = 0 es la vista más reducida; z = levels-1 es la resolución original (1 píxel de mosaico = 1 píxel del ortomosaico)."""
+    key = (z, tx, ty, fmt)
+    if cache:
+        v = cache.get(key)
+        if v is not None:
+            return v
+    scale = 2 ** (src.levels - 1 - z)           # píxeles nativos por píxel del nivel
+    span = TILE * scale
+    img = src.read(tx * span, ty * span, span, span, TILE, TILE)
+    if img is None:
+        return None
+    buf = io.BytesIO()
+    if fmt == 'PNG':
+        img.save(buf, 'PNG')
+    else:
+        img.save(buf, 'JPEG', quality=92, subsampling=0)
+    v = buf.getvalue()
+    if cache:
+        cache.put(key, v)
+    return v
+
+
+class TileServer:
+    def __init__(self, src):
+        self.src, self.cache = src, TileCache()
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body, ctype='application/octet-stream'):
+                self.send_response(code)
+                self.send_header('Content-Type', ctype)
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Cache-Control', 'max-age=3600')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                p = self.path.split('?')[0]
+                if p == '/meta':
+                    s = outer.src
+                    return self._send(200, json.dumps({'w': s.w, 'h': s.h, 'tile': TILE, 'levels': s.levels, 'mpp': s.mpp, 'bounds': s.bounds}).encode(), 'application/json')
+                m = re.match(r'^/tile/(\d+)/(\d+)/(\d+)\.(jpg|png)$', p)
+                if not m:
+                    return self._send(404, b'no')
+                z, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                if z >= outer.src.levels:
+                    return self._send(404, b'z')
+                b = tile_bytes(outer.src, z, x, y, outer.cache, 'PNG' if m.group(4) == 'png' else 'JPEG')
+                if b is None:
+                    return self._send(404, b'vacio')
+                self._send(200, b, 'image/png' if m.group(4) == 'png' else 'image/jpeg')
+
+        self.httpd = ThreadingHTTPServer(('127.0.0.1', 0), H)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+
+
+SERVERS = {}
+
+
+def cmd_open_ortho(args, job):
+    src = open_source(args['path'])
+    ts = TileServer(src)
+    sid = uuid.uuid4().hex[:8]
+    SERVERS[sid] = ts
+    return {'server': sid, 'url': 'http://127.0.0.1:%d' % ts.port, 'w': src.w, 'h': src.h, 'levels': src.levels, 'tile': TILE, 'mpp': src.mpp, 'bounds': src.bounds}
+
+
+def cmd_close_ortho(args, job):
+    ts = SERVERS.pop(args['server'], None)
+    if ts:
+        ts.close()
+    return {'closed': bool(ts)}
+
+
+# ----------------------------------------------------------------------------------------------- bucle principal
+
+COMMANDS = {'ping': lambda a, j: {'pong': True, 'python': sys.version.split()[0], 'docker': docker_ok(), 'rasterio': _has('rasterio')},
+            'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho}
+
+
+def _has(mod):
+    try:
+        __import__(mod)
+        return True
+    except ImportError:
+        return False
+
+
+def run(mid, cmd, args):
+    job = Job(mid)
+    JOBS[mid] = job
+    try:
+        fn = COMMANDS.get(cmd)
+        if not fn:
+            raise RuntimeError('Comando desconocido: ' + str(cmd))
+        emit({'id': mid, 'type': 'result', 'data': fn(args or {}, job)})
+    except Exception as e:
+        emit({'id': mid, 'type': 'error', 'error': str(e)})
+    finally:
+        JOBS.pop(mid, None)
+
+
+def serve():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        threading.Thread(target=run, args=(m.get('id'), m.get('cmd'), m.get('args')), daemon=True).start()
+
+
+if __name__ == '__main__':
+    serve()

@@ -1,0 +1,37 @@
+{
+  "name": "agro-dev-desktop",
+  "productName": "agro.dev",
+  "version": "0.3.0",
+  "description": "agro.dev para Windows: ventana de escritorio + motor Python + ODM",
+  "main": "main.js",
+  "author": "rodmaldo",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "prestart": "node scripts/copy-web.js",
+    "start": "electron .",
+    "predist": "node scripts/copy-web.js",
+    "dist": "electron-builder --win --x64",
+    "dist:dir": "electron-builder --win --x64 --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "dev.agro.desktop",
+    "productName": "agro.dev",
+    "directories": { "output": "release" },
+    "files": ["main.js", "preload.js", "web/**/*", "package.json"],
+    "extraResources": [{ "from": "engine-dist", "to": "engine", "filter": ["**/*"] }],
+    "win": {
+      "icon": "../assets/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "agro.dev-${version}-${arch}.${ext}"
+    },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false }
+  }
+}
