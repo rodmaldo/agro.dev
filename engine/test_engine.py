@@ -57,5 +57,22 @@ def main():
         try: urllib.request.urlopen('%s/tile/%d/999/999.jpg' % (d['url'], top)); raise AssertionError('debía dar 404')
         except urllib.error.HTTPError as ex: assert ex.code == 404
         e.call('close_ortho', server=d['server'])
+    # --- ortomosaico por posición (RTK) + servidor de la pirámide
+    if flight:
+        fl = sorted(os.path.join(dp, f) for dp, _, fs in os.walk(flight) for f in fs if f.lower().endswith('.jpg'))[:8]
+        out = tempfile.mkdtemp()
+        d, pr = e.call('mosaic', files=fl, out=out, res_cm=12, workers=1)
+        print('mosaic', {k: d[k] for k in ('w', 'h', 'levels', 'tiles', 'photos', 'seconds')}, 'avance', len(pr), 'eventos'); assert d['tiles'] > 0 and pr
+        o, _ = e.call('open_tiles', dir=out); top = o['levels'] - 1
+        meta = json.load(urllib.request.urlopen(o['url'] + '/meta')); assert meta['w'] == d['w'] and meta['photos'] == len(fl)
+        got = 0
+        for x in range(0, 3):
+            for y in range(0, 3):
+                try: urllib.request.urlopen('%s/tile/%d/%d/%d.jpg' % (o['url'], top, x, y)).read(); got += 1
+                except urllib.error.HTTPError as ex: assert ex.code == 404
+        z0 = urllib.request.urlopen('%s/tile/0/0/0.jpg' % o['url']).read(); assert len(z0) > 1000
+        print('  mosaicos nativos leídos', got); assert got > 0
+        e.call('close_ortho', server=o['server'])
     e.close(); print('OK')
-main()
+if __name__ == '__main__':
+    main()

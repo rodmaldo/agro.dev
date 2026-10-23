@@ -376,13 +376,23 @@ class TileServer:
                 p = self.path.split('?')[0]
                 if p == '/meta':
                     s = outer.src
-                    return self._send(200, json.dumps({'w': s.w, 'h': s.h, 'tile': TILE, 'levels': s.levels, 'mpp': s.mpp, 'bounds': s.bounds}).encode(), 'application/json')
+                    md = {'w': s.w, 'h': s.h, 'tile': TILE, 'levels': s.levels, 'mpp': s.mpp, 'bounds': s.bounds}
+                    if isinstance(s, DirSource): md.update({k: v for k, v in s.meta.items() if k != 'poly_px'})
+                    return self._send(200, json.dumps(md).encode(), 'application/json')
                 m = re.match(r'^/tile/(\d+)/(\d+)/(\d+)\.(jpg|png)$', p)
                 if not m:
                     return self._send(404, b'no')
                 z, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 if z >= outer.src.levels:
                     return self._send(404, b'z')
+                if isinstance(outer.src, DirSource):
+                    f = outer.src.tile_file(z, x, y)
+                    if not f:
+                        return self._send(404, b'vacio')
+                    data = open(f, 'rb').read()
+                    if m.group(4) == 'png':
+                        bio = io.BytesIO(); Image.open(io.BytesIO(data)).save(bio, 'PNG'); return self._send(200, bio.getvalue(), 'image/png')
+                    return self._send(200, data, 'image/jpeg')
                 b = tile_bytes(outer.src, z, x, y, outer.cache, 'PNG' if m.group(4) == 'png' else 'JPEG')
                 if b is None:
                     return self._send(404, b'vacio')
@@ -414,10 +424,51 @@ def cmd_close_ortho(args, job):
     return {'closed': bool(ts)}
 
 
+# ----------------------------------------------------------------------------------------------- ortomosaico por posición (RTK)
+
+def cmd_mosaic(args, job):
+    """Ortomosaico a resolución original por posición GPS/RTK (sin Docker). args: folders|files, out, res_cm (opcional), quality, workers"""
+    import mosaic_gps
+    files = args.get('files')
+    if not files:
+        files, _, _ = walk_images(args['folders'])
+    if len(files) < 2:
+        raise RuntimeError('Hacen falta al menos 2 fotos RGB (.JPG)')
+    out = os.path.abspath(args['out'])
+    os.makedirs(out, exist_ok=True)
+    res = (args['res_cm'] / 100.0) if args.get('res_cm') else None
+    meta = mosaic_gps.build_mosaic(files, out, res_m=res, quality=int(args.get('quality', 92)), workers=args.get('workers'),
+                                   progress=job.progress, cancel=job.cancel.is_set)
+    meta['dir'] = out
+    return meta
+
+
+class DirSource:
+    """Pirámide de mosaicos ya generada (out/tiles/z/x/y.jpg + meta.json)."""
+    def __init__(self, d):
+        self.dir = d
+        self.meta = json.load(open(os.path.join(d, 'meta.json')))
+        self.w, self.h, self.levels = self.meta['w'], self.meta['h'], self.meta['levels']
+        self.mpp, self.bounds = self.meta.get('mpp'), None
+
+    def tile_file(self, z, x, y):
+        f = os.path.join(self.dir, 'tiles', str(z), str(x), '%d.jpg' % y)
+        return f if os.path.exists(f) else None
+
+
+def cmd_open_tiles(args, job):
+    src = DirSource(args['dir'])
+    ts = TileServer(src)
+    sid = uuid.uuid4().hex[:8]
+    SERVERS[sid] = ts
+    m = dict(src.meta); m.pop('poly_px', None)
+    return dict(m, server=sid, url='http://127.0.0.1:%d' % ts.port, poly_px=src.meta.get('poly_px'))
+
+
 # ----------------------------------------------------------------------------------------------- bucle principal
 
 COMMANDS = {'ping': lambda a, j: {'pong': True, 'python': sys.version.split()[0], 'docker': docker_ok(), 'rasterio': _has('rasterio')},
-            'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho}
+            'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho, 'mosaic': cmd_mosaic, 'open_tiles': cmd_open_tiles}
 
 
 def _has(mod):
@@ -455,4 +506,6 @@ def serve():
 
 
 if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
     serve()
