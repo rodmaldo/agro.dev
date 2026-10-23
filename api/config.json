@@ -1,0 +1,5 @@
+{
+  "mode": "local",
+  "baseUrl": "",
+  "_nota": "mode: 'local' = sitio estático (usuarios en api/users.json, proyectos en localStorage). 'remote' = usa server/server.js u otro backend con el contrato de api/openapi.json."
+}

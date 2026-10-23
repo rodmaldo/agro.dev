@@ -1,0 +1,16 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "agro.dev API", "version": "0.1.0", "description": "Contrato mínimo para el modo remote. Implementación de referencia: server/server.js" },
+  "paths": {
+    "/api/health": { "get": { "summary": "Estado", "responses": { "200": { "description": "ok" } } } },
+    "/api/auth/login": { "post": { "summary": "Ingreso", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["user", "pass"], "properties": { "user": { "type": "string" }, "pass": { "type": "string" } } } } } }, "responses": { "200": { "description": "{ user, token }" }, "401": { "description": "Credenciales inválidas" } } } },
+    "/api/projects": {
+      "get": { "summary": "Lista de proyectos del usuario", "security": [{ "bearer": [] }], "responses": { "200": { "description": "Array de proyectos" } } },
+      "post": { "summary": "Guarda un proyecto", "security": [{ "bearer": [] }], "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } } }, "responses": { "200": { "description": "Proyecto guardado con id" } } }
+    }
+  },
+  "components": {
+    "securitySchemes": { "bearer": { "type": "http", "scheme": "bearer" } },
+    "schemas": { "Project": { "type": "object", "properties": { "name": { "type": "string" }, "layer": { "type": "string" }, "geo": { "type": "object", "properties": { "lat": { "type": "number" }, "lon": { "type": "number" }, "rtk": { "type": "boolean" } } }, "params": { "type": "object" }, "stats": { "type": "object" }, "points": { "type": "array", "items": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "v": { "type": "integer", "enum": [1, -1] } } } } } } }
+  }
+}

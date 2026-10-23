@@ -1,0 +1,7 @@
+node_modules/
+server/data/
+dist/
+release/
+*.log
+__pycache__/
+.venv/

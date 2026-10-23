@@ -1,0 +1,1 @@
+{ "name": "agro-dev", "version": "0.2.0", "private": true, "description": "Zonificación fértil / no fértil con dron", "scripts": { "start": "node server/server.js" }, "engines": { "node": ">=18" } }

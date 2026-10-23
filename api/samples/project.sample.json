@@ -1,0 +1,12 @@
+{
+  "format": "agro.dev/project",
+  "v": 1,
+  "name": "Lote Norte · 23/10/2026",
+  "fieldId": "f1",
+  "app": "0.2.0",
+  "cfg": { "kind": "rgb", "gridM": 5, "rot": 0, "detName": "Salitre", "color": "#E69F00", "sens": 50, "res": "3", "quality": "media", "detail": "norm", "lat": -33.0, "lon": -61.0, "prec": "rtk" },
+  "buf": { "on": true, "m": 2, "color": "#56B4E9" },
+  "poly": [[0.02, 0.03], [0.98, 0.03], [0.98, 0.97], [0.02, 0.97]],
+  "pts": [{ "u": 0.23, "v": 0.3, "s": 1 }, { "u": 0.17, "v": 0.45, "s": -1 }],
+  "stats": { "tot": 189.0, "lote": 176.4, "inf": 21.3, "fer": 155.1 }
+}
