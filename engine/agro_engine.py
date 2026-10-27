@@ -558,7 +558,7 @@ def cmd_cells(args, job):
 
 # ----------------------------------------------------------------------------------------------- bucle principal
 
-COMMANDS = {'ping': lambda a, j: {'pong': True, 'python': sys.version.split()[0], 'docker': docker_ok(), 'rasterio': _has('rasterio')},
+COMMANDS = {'ping': lambda a, j: {'pong': True, 'version': os.environ.get('AGRO_VERSION'), 'python': sys.version.split()[0], 'docker': docker_ok(), 'rasterio': _has('rasterio')},
             'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho, 'mosaic': cmd_mosaic, 'open_tiles': cmd_open_tiles, 'cells': cmd_cells}
 
 
@@ -602,5 +602,5 @@ def serve():
 if __name__ == '__main__':
     import multiprocessing
     multiprocessing.freeze_support()
-    log('motor iniciado · python %s · log %s' % (sys.version.split()[0], log_path()))
+    log('motor iniciado · app v%s · python %s · cpus %s · log %s' % (os.environ.get('AGRO_VERSION', '?'), sys.version.split()[0], os.cpu_count(), log_path()))
     serve()

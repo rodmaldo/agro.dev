@@ -14,7 +14,7 @@ function enginePath() {
 function startEngine() {
   const { cmd, args } = enginePath();
   // PYTHONUTF8/PYTHONIOENCODING: el motor lee y escribe en UTF-8 (en Windows el valor por defecto es cp1252: acentos rotos, rutas con ñ ilegibles)
-  engine = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: Object.assign({}, process.env, { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', AGRO_LOG_DIR: logDir() }) });
+  engine = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: Object.assign({}, process.env, { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', AGRO_LOG_DIR: logDir(), AGRO_VERSION: app.getVersion() }) });
   readline.createInterface({ input: engine.stdout }).on('line', line => {
     let m; try { m = JSON.parse(line); } catch (e) { return; }
     const p = pending.get(m.id);

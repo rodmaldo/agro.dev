@@ -1,7 +1,7 @@
 {
   "name": "agro-dev-desktop",
   "productName": "agro.dev",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "agro.dev para Windows: ventana de escritorio + motor Python + ODM",
   "main": "main.js",
   "author": "rodmaldo",
@@ -21,17 +21,49 @@
   "build": {
     "appId": "dev.agro.desktop",
     "productName": "agro.dev",
-    "directories": { "output": "release" },
-    "files": ["main.js", "preload.js", "web/**/*", "package.json"],
-    "extraResources": [{ "from": "engine-dist", "to": "engine", "filter": ["**/*"] }],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "web/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine-dist",
+        "to": "engine",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "win": {
       "icon": "../assets/icon.ico",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
-      ],
-      "artifactName": "agro.dev-${version}-${arch}.${ext}"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false }
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "agro.dev-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "agro.dev-Portable-${version}.${ext}"
+    }
   }
 }

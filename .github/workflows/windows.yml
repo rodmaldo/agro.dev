@@ -15,6 +15,7 @@ jobs:
         run: |
           python -m pip install -r engine/requirements.txt
           python engine/test_engine.py
+          python engine/test_gains.py
       - name: Motor Python -> agro_engine.exe (PyInstaller, carpeta)
         run: |
           pyinstaller --noconfirm --onedir --name agro_engine --collect-all rasterio --hidden-import mosaic_gps --distpath engine-build engine/agro_engine.py
@@ -23,10 +24,12 @@ jobs:
       - name: Electron -> setup.exe + portable.exe
         working-directory: desktop
         run: |
+          # versión visible en el nombre del .exe y en el pie de la app: 0.4.<número de ejecución> (sube sola con cada build)
+          npm version "0.4.${{ github.run_number }}" --no-git-tag-version --allow-same-version
           npm install
           npm run dist
       - uses: actions/upload-artifact@v4
         with:
-          name: agro.dev-windows
+          name: agro.dev-windows-v0.4.${{ github.run_number }}
           path: |
             desktop/release/*.exe

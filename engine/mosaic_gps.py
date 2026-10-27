@@ -12,7 +12,6 @@ No corrige relieve ni distorsión de lente (para eso está el modo ODM). Con ter
 import json, math, os, re, shutil, sys, time
 import numpy as np
 from PIL import Image
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 Image.MAX_IMAGE_PIXELS = None
 T = 512
@@ -251,22 +250,6 @@ def _cg_laplacian(ri, rj, w2, B, n, anchor=0.02 ** 2, tol=1e-9, max_it=20000):
 _PROG = None          # callable(franja, foto, total): avance dentro de una franja (lo fija el proceso principal o el inicializador del trabajador)
 
 
-def _worker_init(q):
-    """Inicializador de cada proceso trabajador: el avance por foto viaja por una cola hasta el proceso principal."""
-    global _PROG
-    last = [0.0]
-
-    def f(band, k, n):
-        t = time.time()
-        if k == 0 or k >= n or t - last[0] >= 0.5:
-            last[0] = t
-            try:
-                q.put((band, k, n))
-            except Exception:
-                pass
-    _PROG = f
-
-
 def render_band(args):
     """Procesa una franja de filas de mosaicos y escribe los JPEG del nivel de resolución original."""
     band, ty0, ty1, photos, grid, prof, rbins, gains, out_dir, top, quality = args
@@ -341,34 +324,51 @@ def tile_path(out_dir, z, x, y):
     return None
 
 
-def build_pyramid(out_dir, top, nx, ny, progress=None):
-    for z in range(top - 1, -1, -1):
-        zx, zy = (nx + 2 ** (top - z) - 1) // 2 ** (top - z), (ny + 2 ** (top - z) - 1) // 2 ** (top - z)
-        for ty in range(zy):
+def _make_tile(out_dir, z, tx, ty):
+    cv = Image.new('RGBA', (2 * T, 2 * T), (0, 0, 0, 0)); any_ = False
+    for dy in range(2):
+        for dx in range(2):
+            f = tile_path(out_dir, z + 1, 2 * tx + dx, 2 * ty + dy)
+            if f:
+                with Image.open(f) as im:
+                    cv.paste(im.convert('RGBA'), (dx * T, dy * T))
+                any_ = True
+    if not any_:
+        return
+    # promedio ponderado por transparencia (sin halos oscuros en los bordes)
+    a = np.asarray(cv, np.float32); al = a[..., 3:4] / 255.0
+    pm = np.concatenate([a[..., :3] * al, a[..., 3:4]], -1)
+    pm = pm.reshape(T, 2, T, 2, 4).mean((1, 3))
+    alpha = pm[..., 3:4]
+    rgb = np.where(alpha > 1e-3, pm[..., :3] / np.maximum(alpha / 255.0, 1e-6), 0)
+    out = np.concatenate([np.clip(rgb, 0, 255), alpha], -1).astype(np.uint8)
+    d = os.path.join(out_dir, 'tiles', str(z), str(tx)); os.makedirs(d, exist_ok=True)
+    if (out[..., 3] > 250).all():
+        Image.fromarray(out[..., :3]).save(os.path.join(d, '%d.jpg' % ty), 'JPEG', quality=90)
+    else:
+        Image.fromarray(out, 'RGBA').save(os.path.join(d, '%d.png' % ty), 'PNG', compress_level=3)
+
+
+def build_pyramid(out_dir, top, nx, ny, progress=None, threads=1):
+    """Niveles reducidos (cada mosaico = 4 del nivel inferior). Los mosaicos de un nivel son independientes: se reparten en hilos."""
+    from concurrent.futures import ThreadPoolExecutor
+    ex = ThreadPoolExecutor(max_workers=max(1, threads)) if threads > 1 else None
+    try:
+        for z in range(top - 1, -1, -1):
+            zx, zy = (nx + 2 ** (top - z) - 1) // 2 ** (top - z), (ny + 2 ** (top - z) - 1) // 2 ** (top - z)
+            for ty in range(zy):
+                if progress:
+                    progress(((top - 1 - z) + ty / max(1, zy)) / max(1, top))
+                if ex:
+                    list(ex.map(lambda tx: _make_tile(out_dir, z, tx, ty), range(zx)))
+                else:
+                    for tx in range(zx):
+                        _make_tile(out_dir, z, tx, ty)
             if progress:
-                progress(((top - 1 - z) + ty / max(1, zy)) / max(1, top))
-            for tx in range(zx):
-                cv = Image.new('RGBA', (2 * T, 2 * T), (0, 0, 0, 0)); any_ = False
-                for dy in range(2):
-                    for dx in range(2):
-                        f = tile_path(out_dir, z + 1, 2 * tx + dx, 2 * ty + dy)
-                        if f:
-                            cv.paste(Image.open(f).convert('RGBA'), (dx * T, dy * T)); any_ = True
-                if any_:
-                    # promedio ponderado por transparencia (sin halos oscuros en los bordes)
-                    a = np.asarray(cv, np.float32); al = a[..., 3:4] / 255.0
-                    pm = np.concatenate([a[..., :3] * al, a[..., 3:4]], -1)
-                    pm = pm.reshape(T, 2, T, 2, 4).mean((1, 3))
-                    alpha = pm[..., 3:4]
-                    rgb = np.where(alpha > 1e-3, pm[..., :3] / np.maximum(alpha / 255.0, 1e-6), 0)
-                    out = np.concatenate([np.clip(rgb, 0, 255), alpha], -1).astype(np.uint8)
-                    d = os.path.join(out_dir, 'tiles', str(z), str(tx)); os.makedirs(d, exist_ok=True)
-                    if (out[..., 3] > 250).all():
-                        Image.fromarray(out[..., :3]).save(os.path.join(d, '%d.jpg' % ty), 'JPEG', quality=90)
-                    else:
-                        Image.fromarray(out, 'RGBA').save(os.path.join(d, '%d.png' % ty), 'PNG', compress_level=3)
-        if progress:
-            progress((top - z) / max(1, top))
+                progress((top - z) / max(1, top))
+    finally:
+        if ex:
+            ex.shutdown(wait=True)
 
 
 # ----------------------------------------------------------------------------------------------- principal
@@ -391,16 +391,11 @@ def total_ram():
         return 8 * 2 ** 30
 
 
-class Stalled(Exception):
-    pass
-
-
 def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=None, cancel=None, max_photos=None, log=None, stall_s=None):
     """files: rutas de fotos RGB. res_m: tamaño de píxel de salida en metros (None = el de las fotos).
-    progress(pct, msg) se llama seguido (por foto); log(msg) deja constancia con hora; si los trabajadores no dan señales durante
-    stall_s segundos (300 por defecto) se descartan y la franja se termina en un solo proceso."""
+    progress(pct, msg) se llama seguido (por foto); log(msg) deja constancia con hora; si el armado no avanza durante
+    stall_s segundos (300 por defecto) se corta con un error claro en vez de quedar colgado."""
     import queue as _queue
-    from concurrent.futures import wait, FIRST_COMPLETED
     global _PROG
     t0 = time.time()
     L = log or (lambda m: None)
@@ -441,6 +436,15 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     top = max(0, int(math.ceil(math.log2(max(1, max(nx, ny))))))
     levels = top + 1
     tm['lectura'] = round(time.time() - t0, 1)
+    area_ha = (Emax - E0) * (N1 - Nmin) / 1e4
+    L('mosaico: extensión %.0f × %.0f m (%.0f ha de caja) · %d×%d px · %d×%d mosaicos' % (Emax - E0, N1 - Nmin, area_ha, W, H, nx, ny))
+    if W * H > float(os.environ.get('AGRO_MAX_PIXELS') or 4e10):
+        # Un lote real de 400-1000 ha son 5-11 mil millones de px. Más que esto casi siempre son fotos con GPS erróneo o de otro vuelo/lote.
+        me, mn = float(np.median([q['e'] for q in P])), float(np.median([q['n'] for q in P]))
+        far = sorted(P, key=lambda q: -math.hypot(q['e'] - me, q['n'] - mn))[:3]
+        raise RuntimeError('Las fotos cubren una zona de %.1f × %.1f km (%.0f ha): demasiado para un solo lote. Probablemente haya fotos de otro vuelo o con GPS erróneo '
+                           '(por ejemplo %s, a %.1f km del centro). Dejá en la carpeta solo las fotos de un lote.'
+                           % ((Emax - E0) / 1000, (N1 - Nmin) / 1000, area_ha, ', '.join(os.path.basename(q['path']) for q in far), math.hypot(far[0]['e'] - me, far[0]['n'] - mn) / 1000))
     L('mosaico: %d fotos con GPS · %d×%d px a %.2f cm/px · %d×%d mosaicos · %d niveles' % (len(P), W, H, g * 100, nx, ny, levels))
 
     # --- viñeteo
@@ -474,19 +478,16 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     cap = 1 if cpu <= 1 else min(8, max(2, cpu - 1))
     ram_cap = max(1, int(0.65 * total_ram() // per_worker))
     nw = int(workers) if workers else max(1, min(cap, ram_cap))
+    prog(0.12, 'Preparando franjas de trabajo…', True)
     bands = [(k, ty, min(ny, ty + bandh)) for k, ty in enumerate(range(0, ny, bandh))]
-    ps = [(p, i) for i, p in enumerate(P)]
-    jobs = []
-    for k, ty0, ty1 in bands:
-        rect = (E0 - 1, N1 - ty1 * T * g - 1, Emax + 1, N1 - ty0 * T * g + 1)      # (Emin, Nmin, Emax, Nmax) de la franja
-        sel = []; sg = []
-        for (p, i) in ps:
-            fp = footprint(p, 1.0)
-            if max(c[1] for c in fp) < rect[1] or min(c[1] for c in fp) > rect[3]:
-                continue
-            sel.append(p); sg.append(gains[i])
-        if sel:
-            jobs.append((k, ty0, ty1, sel, grid, prof, rb, sg, out_dir, top, quality))
+    sels = [[] for _ in bands]; sgs = [[] for _ in bands]
+    band_rows = bandh * T * g                                 # alto de una franja en metros
+    for i, p in enumerate(P):                                 # cada foto va solo a las franjas que toca (antes: franjas × fotos)
+        ns_ = [c[1] for c in footprint(p, 1.0)]
+        k0 = max(0, int((N1 - max(ns_) - 1) // band_rows)); k1 = min(len(bands) - 1, int((N1 - min(ns_) + 1) // band_rows))
+        for k in range(k0, k1 + 1):
+            sels[k].append(p); sgs[k].append(gains[i])
+    jobs = [(k, ty0, ty1, sels[k], grid, prof, rb, sgs[k], out_dir, top, quality) for k, ty0, ty1 in bands if sels[k]]
     L('mosaico: %d franjas de %d fila(s) de mosaicos · %d trabajador(es) · %.1f GB por trabajador' % (len(jobs), bandh, nw, per_worker / 1e9))
 
     weight = {j[0]: len(j[3]) * 1.15 for j in jobs}          # fotos + escritura de mosaicos
@@ -511,54 +512,70 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         finally:
             _PROG = None
 
-    def run_pool(todo):
-        import multiprocessing
-        ctx = multiprocessing.get_context('spawn')           # el motor tiene hilos y 'fork' puede trabarse; 'spawn' es lo único que existe en Windows
-        q = ctx.Queue()
-        ex = ProcessPoolExecutor(max_workers=nw, mp_context=ctx, initializer=_worker_init, initargs=(q,))
-        pend = {ex.submit(render_band, j) for j in todo}
-        last = time.time(); ok = False
-        try:
-            while pend:
-                news = False
-                try:
-                    while True:
-                        b, k, n = q.get_nowait(); state[b] = (k, n); news = True
-                except _queue.Empty:
-                    pass
-                done, pend = wait(pend, timeout=1.0, return_when=FIRST_COMPLETED)
-                for f in done:
-                    r = f.result(); finished[r[0]] = (r[1], r[2]); news = True
-                if news:
-                    last = time.time(); report()
-                elif time.time() - last > stall_s:
-                    raise Stalled('sin señales de los trabajadores hace %d s' % int(time.time() - last))
-                chk()
-            ok = True
-        finally:
-            if not ok:                                       # cancelar, atasco o error: matar a los trabajadores, no esperar a nadie
-                for p_ in list(getattr(ex, '_processes', {}).values()):
-                    try: p_.kill()
-                    except Exception: pass
-            ex.shutdown(wait=ok, cancel_futures=True)
+    def run_threads(todo):
+        """Franjas en hilos dentro del mismo proceso: sin arrancar procesos nuevos (en Windows, con el motor empaquetado, el arranque de
+        los procesos trabajadores no daba señales). Decodificar JPEG, transformar y operar arrays grandes liberan el GIL: escala bien."""
+        global _PROG
+        import threading
+        qin, qout, stop, news = _queue.Queue(), _queue.Queue(), threading.Event(), [time.time()]
+        for j in todo:
+            qin.put(j)
 
-    mode = ''
+        def f(b, k, n):
+            if stop.is_set():
+                raise RuntimeError('Cancelado')
+            state[b] = (k, n); news[0] = time.time()
+
+        def work():
+            while not stop.is_set():
+                try:
+                    j = qin.get_nowait()
+                except _queue.Empty:
+                    return
+                try:
+                    qout.put(('ok', render_band(j)))
+                except BaseException as e:
+                    qout.put(('err', e)); return
+
+        _PROG = f
+        ths = [threading.Thread(target=work, daemon=True, name='franja-%d' % i) for i in range(nw)]
+        for t in ths:
+            t.start()
+        L('mosaico: %d hilos de trabajo iniciados para %d franjas' % (nw, len(todo)))
+        ndone, t_start = 0, time.time()
+        try:
+            while ndone < len(todo):
+                try:
+                    kind, r = qout.get(timeout=0.5)
+                except _queue.Empty:
+                    kind = None
+                if kind == 'ok':
+                    finished[r[0]] = (r[1], r[2]); ndone += 1
+                    if ndone == 1:
+                        L('mosaico: primera franja lista a los %.1f s' % (time.time() - t_start))
+                elif kind == 'err':
+                    raise r
+                if not state and not finished:
+                    prog(0.12, 'Armando mosaico · iniciando %d hilos de trabajo (%d s)' % (nw, int(time.time() - t_start)))
+                else:
+                    report(' · %d hilos' % nw)
+                if time.time() - news[0] > stall_s:
+                    raise RuntimeError('El armado del mosaico no avanza hace %d s (%d de %d franjas). Mirá el registro (motor.log).' % (int(time.time() - news[0]), ndone, len(todo)))
+                chk()
+        finally:
+            stop.set(); _PROG = None
+
     if nw <= 1:
-        run_seq(jobs, ' · 1 proceso')
+        run_seq(jobs, ' · 1 hilo')
     else:
         try:
-            run_pool(jobs)
-        except Stalled as e:
-            L('mosaico: %s -> se termina en un solo proceso' % e); mode = ' · 1 proceso (reintento)'
-        except RuntimeError as e:
-            if str(e) == 'Cancelado': raise
-            L('mosaico: fallo del grupo de procesos (%s) -> se termina en un solo proceso' % e); mode = ' · 1 proceso (reintento)'
-        except Exception as e:                               # BrokenProcessPool (un trabajador murió, p. ej. por falta de memoria), etc.
-            L('mosaico: fallo del grupo de procesos (%s: %s) -> se termina en un solo proceso' % (type(e).__name__, e)); mode = ' · 1 proceso (reintento)'
-        if mode:
-            for b in list(state):
-                if b not in finished: state.pop(b)
-            run_seq([j for j in jobs if j[0] not in finished], mode)
+            run_threads(jobs)
+        except MemoryError:                                      # sin memoria con varios hilos: se termina de a una franja
+            L('mosaico: sin memoria con %d hilos -> se termina en un solo hilo' % nw)
+            for b_ in list(state):
+                if b_ not in finished: state.pop(b_)
+            run_seq([j for j in jobs if j[0] not in finished], ' · 1 hilo (sin memoria)')
+    mode = ''
     ntiles = sum(v[1] for v in finished.values())
     tm['franjas'] = round(time.time() - ts, 1); L('mosaico: franjas listas en %.1f s (%d mosaicos)' % (tm['franjas'], ntiles))
 
@@ -567,7 +584,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     prog(0.92, 'Generando vistas reducidas', True)
     def ptick(f):
         chk(); prog(0.92 + 0.07 * f, 'Generando vistas reducidas · %d%%' % int(f * 100))
-    build_pyramid(out_dir, top, nx, ny, ptick)
+    build_pyramid(out_dir, top, nx, ny, ptick, threads=nw)
     tm['vistas'] = round(time.time() - ts, 1); L('mosaico: vistas reducidas listas en %.1f s' % tm['vistas'])
     hl = hull(corners)
     poly = [[(c[0] - E0) / g, (N1 - c[1]) / g] for c in hull([c for q in P for c in footprint(q, 0.96)])]
@@ -575,7 +592,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
             'photos': len(P), 'tiles': ntiles, 'poly_px': poly, 'cover_ha': 0, 'seconds': round(time.time() - t0, 1),
             'rtk': sum(1 for q in P if q.get('rtk') == 50), 'alt': float(np.median([q['alt'] or 0 for q in P])), 'quality': quality,
             'vignette': [float(prof[0, 1]), float(prof[-1, 1])], 'gain_range': [float(gains.min()), float(gains.max())],
-            'workers': nw, 'bands': len(jobs), 'timings': tm, 'single_process_fallback': bool(mode)}
+            'workers': nw, 'bands': len(jobs), 'timings': tm, 'single_process_fallback': False, 'engine': 'hilos'}
     # superficie cubierta (unión aproximada: área de píxeles con peso) = tiles no vacíos × área de mosaico (cota superior); la exacta la da el motor de análisis
     meta['cover_ha'] = round(ntiles * (T * g) ** 2 / 1e4, 2)
     json.dump(meta, open(os.path.join(out_dir, 'meta.json'), 'w'))
