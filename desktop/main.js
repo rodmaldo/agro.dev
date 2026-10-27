@@ -13,7 +13,8 @@ function enginePath() {
 
 function startEngine() {
   const { cmd, args } = enginePath();
-  engine = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  // PYTHONUTF8/PYTHONIOENCODING: el motor lee y escribe en UTF-8 (en Windows el valor por defecto es cp1252: acentos rotos, rutas con ñ ilegibles)
+  engine = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: Object.assign({}, process.env, { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', AGRO_LOG_DIR: logDir() }) });
   readline.createInterface({ input: engine.stdout }).on('line', line => {
     let m; try { m = JSON.parse(line); } catch (e) { return; }
     const p = pending.get(m.id);
@@ -31,9 +32,12 @@ function call(id, cmd, args) {
   if (!engine) startEngine();
   return new Promise(resolve => {
     pending.set(id, { resolve });
-    engine.stdin.write(JSON.stringify({ id, cmd, args }) + '\n');
+    // solo ASCII en el tubo (\uXXXX): no depende de la página de códigos del motor
+    engine.stdin.write(JSON.stringify({ id, cmd, args }).replace(/[\u007f-￿]/g, c => '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4)) + '\n');
   });
 }
+
+function logDir() { const d = path.join(app.getPath('userData'), 'logs'); try { fs.mkdirSync(d, { recursive: true }); } catch (e) {} return d; }
 
 function workdir() { const d = path.join(app.getPath('documents'), 'agro.dev'); fs.mkdirSync(d, { recursive: true }); return d; }
 
@@ -49,6 +53,8 @@ function createWindow() {
 
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:workdir', () => workdir());
+ipcMain.handle('app:logdir', () => logDir());
+ipcMain.handle('app:openlogs', () => shell.openPath(logDir()));
 ipcMain.handle('app:system', () => ({ platform: process.platform, arch: process.arch, cpus: os.cpus().length, cpuModel: (os.cpus()[0] || {}).model, ramGB: Math.round(os.totalmem() / 2 ** 30) }));
 ipcMain.handle('dialog:folders', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí una o varias carpetas del vuelo', properties: ['openDirectory', 'multiSelections'] }); return r.canceled ? [] : r.filePaths; });
 ipcMain.handle('dialog:files', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí archivos', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff'] }] }); return r.canceled ? [] : r.filePaths; });

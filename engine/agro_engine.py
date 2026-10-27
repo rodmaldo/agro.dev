@@ -33,11 +33,57 @@ M3_GSD_PER_M = 0.02685      # cm/px por metro de altura (Mavic 3M RGB, 5280 px d
 
 _out_lock = threading.Lock()
 
+# En Windows Python lee/escribe con la página de códigos local (cp1252) y Electron espera UTF-8: acentos rotos y rutas con ñ ilegibles.
+for _s in (sys.stdin, sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 
 def emit(obj):
+    # ensure_ascii=True: el JSON viaja solo con ASCII (\uXXXX) y no depende de la codificación del tubo
+    line = json.dumps(obj) + '\n'
     with _out_lock:
-        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
-        sys.stdout.flush()
+        try:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------------------------------------- registro (log)
+
+_log_lock = threading.Lock()
+_log_path = None
+
+
+def log_path():
+    global _log_path
+    if _log_path is None:
+        d = os.environ.get('AGRO_LOG_DIR') or os.path.join(os.path.expanduser('~'), 'agro.dev', 'logs')
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            d = os.getcwd()
+        _log_path = os.path.join(d, 'motor.log')
+        try:                                            # rotación simple: máximo ~5 MB
+            if os.path.exists(_log_path) and os.path.getsize(_log_path) > 5 * 2 ** 20:
+                os.replace(_log_path, _log_path + '.1')
+        except Exception:
+            pass
+    return _log_path
+
+
+def log(msg):
+    """Una línea con fecha y hora en motor.log (siempre se escribe aunque la ventana no esté mirando)."""
+    line = time.strftime('%Y-%m-%d %H:%M:%S') + ' [%d] ' % os.getpid() + str(msg)
+    with _log_lock:
+        try:
+            with open(log_path(), 'a', encoding='utf-8') as f:
+                f.write(line + '\n')
+        except Exception:
+            pass
 
 
 # ----------------------------------------------------------------------------------------------- scan
@@ -182,7 +228,8 @@ class Job:
         self.container = None
 
     def progress(self, pct, msg=''):
-        emit({'id': self.mid, 'type': 'progress', 'pct': round(float(pct), 4), 'msg': msg})
+        # 't' = hora del motor (epoch): la ventana la usa para el tiempo transcurrido y para detectar un motor sin señales
+        emit({'id': self.mid, 'type': 'progress', 'pct': round(float(pct), 4), 'msg': msg, 't': round(time.time(), 2)})
 
 
 JOBS = {}
@@ -450,9 +497,19 @@ def cmd_mosaic(args, job):
     out = os.path.abspath(args['out'])
     os.makedirs(out, exist_ok=True)
     res = (args['res_cm'] / 100.0) if args.get('res_cm') else None
-    meta = mosaic_gps.build_mosaic(files, out, res_m=res, quality=int(args.get('quality', 92)), workers=args.get('workers'),
-                                   progress=job.progress, cancel=job.cancel.is_set)
+    t0 = time.time()
+    log('mosaico: inicio · %d fotos · salida %s · res_cm=%s · cpus=%s' % (len(files), out, args.get('res_cm'), os.cpu_count()))
+    try:
+        meta = mosaic_gps.build_mosaic(files, out, res_m=res, quality=int(args.get('quality', 92)), workers=args.get('workers'),
+                                       progress=job.progress, cancel=job.cancel.is_set, log=log)
+    except Exception as e:
+        import traceback
+        log('mosaico: ERROR %s\n%s' % (e, traceback.format_exc()))
+        raise
     meta['dir'] = out
+    meta['started'] = round(t0, 2); meta['finished'] = round(time.time(), 2); meta['seconds'] = round(meta['finished'] - t0, 1)
+    meta['log'] = log_path()
+    log('mosaico: listo en %.1f s · %d mosaicos' % (meta['seconds'], meta.get('tiles', 0)))
     return meta
 
 
@@ -514,10 +571,13 @@ def run(mid, cmd, args):
     JOBS[mid] = job
     try:
         fn = COMMANDS.get(cmd)
+        if cmd != 'ping':
+            log('comando %s (id %s)' % (cmd, mid))
         if not fn:
             raise RuntimeError('Comando desconocido: ' + str(cmd))
         emit({'id': mid, 'type': 'result', 'data': fn(args or {}, job)})
     except Exception as e:
+        log('comando %s: error %s' % (cmd, e))
         emit({'id': mid, 'type': 'error', 'error': str(e)})
     finally:
         JOBS.pop(mid, None)
@@ -538,4 +598,5 @@ def serve():
 if __name__ == '__main__':
     import multiprocessing
     multiprocessing.freeze_support()
+    log('motor iniciado · python %s · log %s' % (sys.version.split()[0], log_path()))
     serve()

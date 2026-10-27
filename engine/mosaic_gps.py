@@ -133,10 +133,11 @@ def thumb(path, div=16):
     return a.astype(np.float32), size
 
 
-def vignette_profile(photos, nb=48):
+def vignette_profile(photos, nb=48, tick=None):
     """Perfil radial medio (por canal) normalizado al centro, mediana entre todas las fotos. Devuelve (r_bins, perfil[nb,3])."""
     rows = []
-    for p in photos:
+    for n_, p in enumerate(photos):
+        if tick: tick(n_, len(photos))
         a, _ = thumb(p['path'])
         h, w = a.shape[:2]
         yy, xx = np.mgrid[0:h, 0:w]
@@ -158,11 +159,13 @@ def vignette_gain(r, prof, rbins):
     return np.stack([1.0 / np.interp(r, rbins, prof[:, c]) for c in range(3)], -1)
 
 
-def solve_gains(photos, frame, prof, rbins, g_out):
-    """Ganancias por foto y canal para que las superposiciones coincidan (mínimos cuadrados sobre log-ratios)."""
+def solve_gains(photos, frame, prof, rbins, g_out, tick=None):
+    """Ganancias por foto y canal para que las superposiciones coincidan (mínimos cuadrados sobre log-ratios).
+    tick(etapa, i, n) avisa el avance (para la barra de progreso y para saber que el motor sigue vivo)."""
     n = len(photos)
     th = []
-    for p in photos:
+    for i_, p in enumerate(photos):
+        if tick and i_ % 20 == 0: tick('miniaturas', i_, n)
         a, (w, h) = thumb(p['path'])
         hh, ww = a.shape[:2]
         yy, xx = np.mgrid[0:hh, 0:ww]
@@ -177,7 +180,8 @@ def solve_gains(photos, frame, prof, rbins, g_out):
         for j in np.argsort(d)[1:9]:                      # 8 vecinos más cercanos
             if 1.0 < d[j] < lim:
                 pairs.add((min(i, int(j)), max(i, int(j))))
-    for (i, j) in sorted(pairs):
+    for k_, (i, j) in enumerate(sorted(pairs)):
+        if tick and k_ % 100 == 0: tick('pares', k_, len(pairs))
         if True:
             P, Q = photos[i], photos[j]
             ai, wi, hi = th[i]; aj, wj, hj = th[j]
@@ -205,21 +209,48 @@ def solve_gains(photos, frame, prof, rbins, g_out):
             for c in range(3): vals[c].append(math.log(mj[c] / mi[c]))        # log g_i - log g_j = log(mj/mi)·(-1)… ver abajo
     if not rows_i:
         return np.ones((n, 3), np.float32)
+    if tick: tick('resolver', 0, 1)
     m = len(rows_i)
-    A = np.zeros((m + 1, n)); w = np.array(wts) / max(wts)
-    for k in range(m):
-        A[k, rows_i[k]] = w[k]; A[k, rows_j[k]] = -w[k]
-    A[m, :] = 0.02                                             # ancla: la ganancia media queda en 1
+    w = np.array(wts) / max(wts)
+    # Ecuaciones normales (AᵀA x = Aᵀb), construidas directamente sin la matriz densa m×n: con 1200 fotos la SVD de lstsq
+    # sobre ~9000×1200 era lenta y gastaba memoria; AᵀA es n×n, ralo y se arma en milisegundos.
+    ri, rj = np.array(rows_i), np.array(rows_j)
+    AtA = np.zeros((n, n))
+    np.add.at(AtA, (ri, ri), w * w); np.add.at(AtA, (rj, rj), w * w)
+    np.add.at(AtA, (ri, rj), -w * w); np.add.at(AtA, (rj, ri), -w * w)
+    AtA += 0.02 ** 2                                           # ancla: la ganancia media queda en 1 (fila 0.02·[1…1])
+    AtA += np.eye(n) * 1e-9
     G = np.ones((n, 3), np.float32)
+    # g_i * mi = g_j * mj  ->  log g_i - log g_j = log(mj/mi)
+    B = np.zeros((n, 3))
     for c in range(3):
-        # g_i * mi = g_j * mj  ->  log g_i - log g_j = log(mj/mi)
-        b = np.concatenate([np.array(vals[c]) * w, [0.0]])
-        x = np.linalg.lstsq(A, b, rcond=None)[0]
-        G[:, c] = np.exp(np.clip(x, -0.5, 0.5))
+        wb = np.array(vals[c]) * w * w
+        np.add.at(B[:, c], ri, wb); np.add.at(B[:, c], rj, -wb)
+    X = np.linalg.solve(AtA, B)
+    G[:] = np.exp(np.clip(X, -0.5, 0.5))
     return G
 
 
 # ----------------------------------------------------------------------------------------------- franjas
+
+_PROG = None          # callable(franja, foto, total): avance dentro de una franja (lo fija el proceso principal o el inicializador del trabajador)
+
+
+def _worker_init(q):
+    """Inicializador de cada proceso trabajador: el avance por foto viaja por una cola hasta el proceso principal."""
+    global _PROG
+    last = [0.0]
+
+    def f(band, k, n):
+        t = time.time()
+        if k == 0 or k >= n or t - last[0] >= 0.5:
+            last[0] = t
+            try:
+                q.put((band, k, n))
+            except Exception:
+                pass
+    _PROG = f
+
 
 def render_band(args):
     """Procesa una franja de filas de mosaicos y escribe los JPEG del nivel de resolución original."""
@@ -229,6 +260,7 @@ def render_band(args):
     acc = np.zeros((bh, W, 3), np.float32); wsum = np.zeros((bh, W), np.float32)
     used = 0
     for k, p in enumerate(photos):
+        if _PROG: _PROG(band, k, len(photos))
         fp = footprint(p, 1.0)
         es = [(q[0] - E0) / g for q in fp]; ns = [(N1 - q[1]) / g for q in fp]
         c0, c1 = int(max(0, math.floor(min(es)))), int(min(W, math.ceil(max(es))))
@@ -237,7 +269,8 @@ def render_band(args):
             continue
         used += 1
         with Image.open(p['path']) as im:
-            im = im.convert('RGB')
+            if im.mode != 'RGB':                      # un JPEG RGB ya lo es: convert() copiaba 60 MB por foto para nada
+                im = im.convert('RGB')
             sw, sh = c1 - c0, y1 - y0
             a, b, c, d, e, f = photo_matrix(p, E0 + c0 * g, N1 - y0 * g, g)
             blk = im.transform((sw, sh), Image.AFFINE, (a, b, c, d, e, f), Image.BICUBIC)
@@ -259,10 +292,12 @@ def render_band(args):
     n_tiles = 0
     nx = (W + T - 1) // T
     ok = wsum > 1e-4
-    img = np.zeros_like(acc)
-    img[ok] = acc[ok] / wsum[ok, None]
-    np.clip(img, 0, 255, out=img)
-    arr = img.astype(np.uint8)
+    acc /= np.maximum(wsum, 1e-6)[..., None]              # en el lugar: sin una segunda copia float32 de la franja
+    acc[~ok] = 0
+    np.clip(acc, 0, 255, out=acc)
+    arr = acc.astype(np.uint8)
+    del acc
+    if _PROG: _PROG(band, len(photos), len(photos))
     for ty in range(ty0, ty1):
         for tx in range(nx):
             y_a, y_b = ty * T - r0, min(bh, (ty + 1) * T - r0)
@@ -295,6 +330,8 @@ def build_pyramid(out_dir, top, nx, ny, progress=None):
     for z in range(top - 1, -1, -1):
         zx, zy = (nx + 2 ** (top - z) - 1) // 2 ** (top - z), (ny + 2 ** (top - z) - 1) // 2 ** (top - z)
         for ty in range(zy):
+            if progress:
+                progress(((top - 1 - z) + ty / max(1, zy)) / max(1, top))
             for tx in range(zx):
                 cv = Image.new('RGBA', (2 * T, 2 * T), (0, 0, 0, 0)); any_ = False
                 for dy in range(2):
@@ -321,10 +358,59 @@ def build_pyramid(out_dir, top, nx, ny, progress=None):
 
 # ----------------------------------------------------------------------------------------------- principal
 
-def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=None, cancel=None, max_photos=None):
-    """files: rutas de fotos RGB. res_m: tamaño de píxel de salida en metros (None = el de las fotos)."""
+def total_ram():
+    """Memoria disponible en bytes (en Windows la libre; en otros sistemas la total). Si no se puede leer, 8 GB."""
+    try:
+        if os.name == 'nt':
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong), ('ullTotalPhys', ctypes.c_ulonglong),
+                            ('ullAvailPhys', ctypes.c_ulonglong), ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
+                            ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong), ('sullAvailExtendedVirtual', ctypes.c_ulonglong)]
+            s = MS(); s.dwLength = ctypes.sizeof(MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(s))
+            return int(s.ullAvailPhys)
+        return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+    except Exception:
+        return 8 * 2 ** 30
+
+
+class Stalled(Exception):
+    pass
+
+
+def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=None, cancel=None, max_photos=None, log=None, stall_s=None):
+    """files: rutas de fotos RGB. res_m: tamaño de píxel de salida en metros (None = el de las fotos).
+    progress(pct, msg) se llama seguido (por foto); log(msg) deja constancia con hora; si los trabajadores no dan señales durante
+    stall_s segundos (300 por defecto) se descartan y la franja se termina en un solo proceso."""
+    import queue as _queue
+    from concurrent.futures import wait, FIRST_COMPLETED
+    global _PROG
     t0 = time.time()
-    P = [q for q in (parse_photo(f) for f in files) if q]
+    L = log or (lambda m: None)
+    stall_s = float(stall_s or os.environ.get('AGRO_STALL_S') or 300)
+    last_emit = [0.0]
+
+    def prog(p, m, force=False):
+        t = time.time()
+        if progress and (force or t - last_emit[0] >= 0.4):
+            last_emit[0] = t
+            progress(p, m)
+
+    def chk():
+        if cancel and cancel():
+            raise RuntimeError('Cancelado')
+
+    tm = {}
+    n_files = len(files)
+    P = []
+    for i, f in enumerate(files):
+        if i % 20 == 0:
+            chk(); prog(0.02 * i / max(1, n_files), 'Leyendo posición de las fotos %d/%d' % (i, n_files))
+        q_ = parse_photo(f)
+        if q_:
+            P.append(q_)
     if max_photos:
         P = P[:max_photos]
     if len(P) < 2:
@@ -339,13 +425,39 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     nx, ny = (W + T - 1) // T, (H + T - 1) // T
     top = max(0, int(math.ceil(math.log2(max(1, max(nx, ny))))))
     levels = top + 1
-    if progress: progress(0.02, 'Corrigiendo viñeteo (%d fotos)' % len(P))
-    rb, prof = vignette_profile(P)
-    if progress: progress(0.08, 'Igualando exposición entre fotos')
-    gains = solve_gains(P, fr, prof, rb, g)
+    tm['lectura'] = round(time.time() - t0, 1)
+    L('mosaico: %d fotos con GPS · %d×%d px a %.2f cm/px · %d×%d mosaicos · %d niveles' % (len(P), W, H, g * 100, nx, ny, levels))
+
+    # --- viñeteo
+    ts = time.time()
+    def vtick(i, n):
+        chk()
+        if i % 10 == 0:
+            prog(0.02 + 0.06 * i / n, 'Corrigiendo viñeteo · foto %d/%d' % (i, n))
+    rb, prof = vignette_profile(P, tick=vtick)
+    tm['viñeteo'] = round(time.time() - ts, 1); L('mosaico: viñeteo listo en %.1f s' % tm['viñeteo'])
+
+    # --- exposición entre fotos
+    ts = time.time()
+    def gtick(stage, i, n):
+        chk()
+        fr_ = {'miniaturas': 0.0 + 0.5 * i / n, 'pares': 0.5 + 0.45 * i / n, 'resolver': 0.95}[stage]
+        txt = {'miniaturas': 'miniaturas %d/%d' % (i, n), 'pares': 'comparando fotos vecinas %d/%d' % (i, n), 'resolver': 'resolviendo ganancias'}[stage]
+        prog(0.08 + 0.04 * fr_, 'Igualando exposición entre fotos · ' + txt)
+    gains = solve_gains(P, fr, prof, rb, g, tick=gtick)
+    tm['exposición'] = round(time.time() - ts, 1); L('mosaico: exposición lista en %.1f s' % tm['exposición'])
+
     shutil.rmtree(os.path.join(out_dir, 'tiles'), ignore_errors=True); os.makedirs(os.path.join(out_dir, 'tiles'), exist_ok=True)
     grid = {'E0': E0, 'N1': N1, 'g': g, 'W': W, 'H': H}
-    bandh = 1 if W > 40000 else 2
+
+    # --- franjas: tamaño según el ancho (memoria por trabajador ≈ franja × ancho × 19 bytes) y cantidad de trabajadores según la RAM libre
+    budget = float(os.environ.get('AGRO_BAND_BYTES') or 1.6e9)
+    bandh = int(max(1, min(8, budget // (max(1, W) * 19.0 * T))))
+    per_worker = bandh * T * W * 19.0 + 0.7e9
+    cpu = os.cpu_count() or 2
+    cap = 1 if cpu <= 1 else min(8, max(2, cpu - 1))
+    ram_cap = max(1, int(0.65 * total_ram() // per_worker))
+    nw = int(workers) if workers else max(1, min(cap, ram_cap))
     bands = [(k, ty, min(ny, ty + bandh)) for k, ty in enumerate(range(0, ny, bandh))]
     ps = [(p, i) for i, p in enumerate(P)]
     jobs = []
@@ -359,35 +471,97 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
             sel.append(p); sg.append(gains[i])
         if sel:
             jobs.append((k, ty0, ty1, sel, grid, prof, rb, sg, out_dir, top, quality))
-    workers = workers or max(1, min(4, (os.cpu_count() or 2) - 0))
-    done = 0; ntiles = 0
-    if workers == 1:
-        results = (render_band(j) for j in jobs)
-        for r in results:
-            done += 1; ntiles += r[2]
-            if progress: progress(0.12 + 0.78 * done / len(jobs), 'Armando mosaico %d/%d' % (done, len(jobs)))
-            if cancel and cancel(): raise RuntimeError('Cancelado')
-    else:
+    L('mosaico: %d franjas de %d fila(s) de mosaicos · %d trabajador(es) · %.1f GB por trabajador' % (len(jobs), bandh, nw, per_worker / 1e9))
+
+    weight = {j[0]: len(j[3]) * 1.15 for j in jobs}          # fotos + escritura de mosaicos
+    total_w = max(1.0, sum(weight.values()))
+    state = {}                                               # franja -> (foto, total) en curso
+    finished = {}                                            # franja -> (usadas, mosaicos)
+    ts = time.time()
+
+    def report(mode='', force=False):
+        w = sum(weight[b] for b in finished) + sum(min(k, n) for b, (k, n) in state.items() if b not in finished)
+        frac = min(1.0, w / total_w)
+        prog(0.12 + 0.78 * frac, 'Armando mosaico · %d/%d franjas · %d%%%s' % (len(finished), len(jobs), int(frac * 100), mode), force)
+
+    def run_seq(todo, mode):
+        global _PROG
+        def f(b, k, n):
+            state[b] = (k, n); chk(); report(mode)
+        _PROG = f
+        try:
+            for j in todo:
+                r = render_band(j); finished[r[0]] = (r[1], r[2]); report(mode, True)
+        finally:
+            _PROG = None
+
+    def run_pool(todo):
         import multiprocessing
-        # 'spawn': el motor tiene hilos (lectura de comandos, servidor HTTP) y 'fork' puede trabarse; 'spawn' es además lo único que existe en Windows
-        with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn')) as ex:
-            futs = [ex.submit(render_band, j) for j in jobs]
-            for f in as_completed(futs):
-                r = f.result(); done += 1; ntiles += r[2]
-                if progress: progress(0.12 + 0.78 * done / len(jobs), 'Armando mosaico %d/%d' % (done, len(jobs)))
-                if cancel and cancel():
-                    for x in futs: x.cancel()
-                    raise RuntimeError('Cancelado')
-    if progress: progress(0.92, 'Generando vistas reducidas')
-    build_pyramid(out_dir, top, nx, ny, lambda f: progress and progress(0.92 + 0.07 * f, 'Generando vistas reducidas'))
+        ctx = multiprocessing.get_context('spawn')           # el motor tiene hilos y 'fork' puede trabarse; 'spawn' es lo único que existe en Windows
+        q = ctx.Queue()
+        ex = ProcessPoolExecutor(max_workers=nw, mp_context=ctx, initializer=_worker_init, initargs=(q,))
+        pend = {ex.submit(render_band, j) for j in todo}
+        last = time.time(); ok = False
+        try:
+            while pend:
+                news = False
+                try:
+                    while True:
+                        b, k, n = q.get_nowait(); state[b] = (k, n); news = True
+                except _queue.Empty:
+                    pass
+                done, pend = wait(pend, timeout=1.0, return_when=FIRST_COMPLETED)
+                for f in done:
+                    r = f.result(); finished[r[0]] = (r[1], r[2]); news = True
+                if news:
+                    last = time.time(); report()
+                elif time.time() - last > stall_s:
+                    raise Stalled('sin señales de los trabajadores hace %d s' % int(time.time() - last))
+                chk()
+            ok = True
+        finally:
+            if not ok:                                       # cancelar, atasco o error: matar a los trabajadores, no esperar a nadie
+                for p_ in list(getattr(ex, '_processes', {}).values()):
+                    try: p_.kill()
+                    except Exception: pass
+            ex.shutdown(wait=ok, cancel_futures=True)
+
+    mode = ''
+    if nw <= 1:
+        run_seq(jobs, ' · 1 proceso')
+    else:
+        try:
+            run_pool(jobs)
+        except Stalled as e:
+            L('mosaico: %s -> se termina en un solo proceso' % e); mode = ' · 1 proceso (reintento)'
+        except RuntimeError as e:
+            if str(e) == 'Cancelado': raise
+            L('mosaico: fallo del grupo de procesos (%s) -> se termina en un solo proceso' % e); mode = ' · 1 proceso (reintento)'
+        except Exception as e:                               # BrokenProcessPool (un trabajador murió, p. ej. por falta de memoria), etc.
+            L('mosaico: fallo del grupo de procesos (%s: %s) -> se termina en un solo proceso' % (type(e).__name__, e)); mode = ' · 1 proceso (reintento)'
+        if mode:
+            for b in list(state):
+                if b not in finished: state.pop(b)
+            run_seq([j for j in jobs if j[0] not in finished], mode)
+    ntiles = sum(v[1] for v in finished.values())
+    tm['franjas'] = round(time.time() - ts, 1); L('mosaico: franjas listas en %.1f s (%d mosaicos)' % (tm['franjas'], ntiles))
+
+    # --- pirámide de vistas reducidas
+    ts = time.time()
+    prog(0.92, 'Generando vistas reducidas', True)
+    def ptick(f):
+        chk(); prog(0.92 + 0.07 * f, 'Generando vistas reducidas · %d%%' % int(f * 100))
+    build_pyramid(out_dir, top, nx, ny, ptick)
+    tm['vistas'] = round(time.time() - ts, 1); L('mosaico: vistas reducidas listas en %.1f s' % tm['vistas'])
     hl = hull(corners)
     poly = [[(c[0] - E0) / g, (N1 - c[1]) / g] for c in hull([c for q in P for c in footprint(q, 0.96)])]
     meta = {'w': W, 'h': H, 'tile': T, 'levels': levels, 'mpp': g, 'E0': E0, 'N1': N1, 'lat0': fr.lat0, 'lon0': fr.lon0, 'kx': fr.kx, 'ky': fr.ky,
             'photos': len(P), 'tiles': ntiles, 'poly_px': poly, 'cover_ha': 0, 'seconds': round(time.time() - t0, 1),
             'rtk': sum(1 for q in P if q.get('rtk') == 50), 'alt': float(np.median([q['alt'] or 0 for q in P])), 'quality': quality,
-            'vignette': [float(prof[0, 1]), float(prof[-1, 1])], 'gain_range': [float(gains.min()), float(gains.max())]}
+            'vignette': [float(prof[0, 1]), float(prof[-1, 1])], 'gain_range': [float(gains.min()), float(gains.max())],
+            'workers': nw, 'bands': len(jobs), 'timings': tm, 'single_process_fallback': bool(mode)}
     # superficie cubierta (unión aproximada: área de píxeles con peso) = tiles no vacíos × área de mosaico (cota superior); la exacta la da el motor de análisis
     meta['cover_ha'] = round(ntiles * (T * g) ** 2 / 1e4, 2)
     json.dump(meta, open(os.path.join(out_dir, 'meta.json'), 'w'))
-    if progress: progress(1.0, 'Ortomosaico listo')
+    prog(1.0, 'Ortomosaico listo', True)
     return meta

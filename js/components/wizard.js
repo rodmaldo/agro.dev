@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   const { useState, useEffect, useRef, useReducer } = React;
-  const { html, Ic, Slider, Seg, Toggle, MapCanvas, StepBar, Rail, Foot, baseUi, useSpace, useToast, f1 } = root.AZUI;
+  const { html, Ic, Slider, Seg, Toggle, MapCanvas, StepBar, Rail, Foot, baseUi, useSpace, useToast, f1, ProcessDialog, fmtDur, fmtClock } = root.AZUI;
 
   /* colores sugeridos por factor (paleta apta para daltonismo, Okabe-Ito) */
   const PAL = { salitre: '#E69F00', salinidad: '#E69F00', maleza: '#CC79A7', malezas: '#CC79A7', plaga: '#D55E00', plagas: '#D55E00', anegamiento: '#56B4E9', encharcamiento: '#56B4E9', sequia: '#F0E442' };
@@ -31,22 +31,24 @@
     /* ---------- paso 1: procesar imágenes ---------- */
     const sampleFile = () => info.raw.slice().sort((a, b) => b.f.size - a.f.size)[0].f;
     const process = async () => {
-      cancel.current = { v: false }; setProg({ pct: 0, msg: 'Leyendo posiciones GPS…' });
+      cancel.current = { v: false }; const T0 = Date.now(); job.timing = null;
+      const upd = (pct, msg) => setProg({ pct, msg, t0: T0, last: Date.now(), watch: !!info.native });
+      upd(0, 'Leyendo posiciones GPS…');
       try {
         if (info.native) {                       // escritorio: ortomosaico a resolución original + celdas calculadas por el motor
-          const base = await AZDesktop.buildBase({ files: info.raw, name: field.name, outRes: cfg.outRes === 'orig' ? null : +cfg.outRes, rtk: cfg.prec === 'rtk' }, (pct, msg) => setProg({ pct, msg }), cancel.current);
-          job.base = base; job.note = base.note;
-          await AZFiles.applyTiled(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det', (p, m) => setProg({ pct: 0.92 + 0.08 * p, msg: m }), cancel.current);
+          const base = await AZDesktop.buildBase({ files: info.raw, name: field.name, outRes: cfg.outRes === 'orig' ? null : +cfg.outRes, rtk: cfg.prec === 'rtk' }, upd, cancel.current);
+          job.base = base; job.note = base.note; job.timing = base.timing;
+          await AZFiles.applyTiled(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det', (p, m) => upd(0.92 + 0.08 * p, m), cancel.current);
           setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
           return;
         }
         const o = { source: cfg.source, items: info.raw, file: cfg.source === 'ortho' ? info.ortho.f : cfg.source === 'sample' ? sampleFile() : null, ndvi: cfg.kind !== 'rgb' && cfg.source !== 'mosaic' ? cfg.ndvi : null, res: +cfg.res, quality: cfg.quality, lat: +cfg.lat, lon: +cfg.lon, rtk: cfg.prec === 'rtk' };
-        const base = await AZFiles.buildBase(o, (pct, msg) => setProg({ pct, msg }), cancel.current);
+        const base = await AZFiles.buildBase(o, upd, cancel.current);
         job.base = base; job.note = base.note;
-        setProg({ pct: 0.95, msg: 'Calculando grilla…' }); await new Promise(r => setTimeout(r, 30));
+        upd(0.95, 'Calculando grilla…'); await new Promise(r => setTimeout(r, 30));
         AZFiles.apply(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det');
         setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
-      } catch (e) { setProg(null); toast(e.message === 'cancelado' ? 'Proceso cancelado' : 'No se pudo procesar: ' + e.message); }
+      } catch (e) { setProg(null); toast(/cancelad/i.test(e.message) ? 'Proceso cancelado' : 'No se pudo procesar: ' + e.message); }
     };
     const canProcess = info && (info.native ? info.raw.length >= 2 && info.geoPhotos > 0 : cfg.source === 'mosaic' ? info.raw.length >= 2 && info.geoPhotos > 0 : cfg.source === 'ortho' ? !!info.ortho : info.raw.length > 0) && !(cfg.kind === 'ms' && cfg.source === 'mosaic' && !info.raw.length)
       && (info.native || (isFinite(+cfg.lat) && isFinite(+cfg.lon) && Math.abs(+cfg.lat) <= 90 && Math.abs(+cfg.lon) <= 180 && +cfg.res > 0));
@@ -159,7 +161,10 @@
             <div className="kv"><span>Celdas</span><span>${S.gw}×${S.gh} (${(S.gw * S.gh).toLocaleString('es-AR')})</span></div>
             <div className="kv"><span>Celda efectiva</span><span>${f1(AZ.cellM(S), 2)} m</span></div>
             <div className="kv"><span>Superficie relevada</span><span>${f1(AZ.coverHa(S), 1)} ha</span></div>
-            ${job.note && html`<div className="kv"><span>Fotos usadas</span><span>${job.note}</span></div>`}</div>
+            ${job.note && html`<div className="kv"><span>Fotos usadas</span><span>${job.note}</span></div>`}
+            ${job.timing && html`<div className="kv"><span>Ortomosaico: inicio</span><span>${fmtClock(job.timing.start)}</span></div>
+            <div className="kv"><span>Ortomosaico: fin</span><span>${fmtClock(job.timing.end, job.timing.start)}</span></div>
+            <div className="kv"><span>Tiempo total</span><span>${fmtDur(job.timing.seconds * 1000)}</span></div>`}</div>
           ${S.capped && html`<div className="note w">A esta resolución el lote supera el máximo de 4 millones de celdas; la celda efectiva es de ${f1(AZ.cellM(S), 2)} m en lugar de ${f1(cfg.gridM, 2)} m.</div>`}
           <${Slider} label="Opacidad de la grilla" min=${0} max=${100} value=${ui.gridOp} unit=" %" onChange=${v => set({ gridOp: v })}/>
           <div className="mu">Mantené <kbd>Espacio</kbd> para ocultar la grilla.</div>
@@ -197,8 +202,7 @@
         ${step === 2 && html`<button className="btn pri" type="button" disabled=${!ready} onClick=${finish} title=${ready ? '' : 'Faltan puntos o la detección todavía no terminó'}>Finalizar detección</button>`}
       </div>
       <${Foot}/>
-      ${prog && html`<div className="veil"><div className="login" role="status" aria-live="polite"><h2>Procesando</h2><div className="mu">${prog.msg}</div><div className="pbar"><div style=${{ width: Math.round(prog.pct * 100) + '%', background: 'var(--ac)' }}></div></div>
-        <button className="btn" type="button" onClick=${() => { cancel.current.v = true; }}>Cancelar</button></div></div>`}
+      ${prog && html`<${ProcessDialog} prog=${prog} onCancel=${() => { cancel.current.v = true; }}/>`}
       ${toastEl}</div>`;
   };
 

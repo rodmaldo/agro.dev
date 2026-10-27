@@ -150,6 +150,14 @@ input[type=range]:hover::-webkit-slider-thumb,input[type=range]:active::-webkit-
 .stat .k i{width:9px;height:9px;display:inline-block}
 .pbar{height:3px;background:var(--ln)}
 .pbar div{height:100%;transition:width .4s}
+.pdlg{width:390px}
+.pstage{display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-size:12px}.pstage b{font:700 13px var(--mono);color:var(--ac);white-space:nowrap}
+.pbar2{height:6px;background:var(--ln);overflow:hidden}
+.pbar2 .fill{height:100%;background:var(--ac);position:relative;overflow:hidden;transition:width .6s cubic-bezier(.22,1,.36,1)}
+.pbar2 .fill::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff66,transparent);transform:translateX(-100%);animation:shim 1.5s linear infinite}
+.pbar2 .fill.stale{background:#ff8a65}.pbar2 .fill.stale::after{animation:none}
+@keyframes shim{to{transform:translateX(100%)}}
+@media (prefers-reduced-motion:reduce){.pbar2 .fill::after{animation:none}.pbar2 .fill{transition:none}}
 .kv{display:flex;justify-content:space-between;gap:8px;padding:2px 0;font-size:12px}
 .kv span:first-child{color:var(--mu)}
 .kv span:last-child{font-family:var(--mono)}

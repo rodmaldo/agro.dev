@@ -16,5 +16,7 @@ contextBridge.exposeInMainWorld('agroDesktop', {
   },
   cancel: id => ipcRenderer.invoke('engine:cancel', id),
   reveal: p => ipcRenderer.invoke('shell:reveal', p),
-  workdir: () => ipcRenderer.invoke('app:workdir')
+  workdir: () => ipcRenderer.invoke('app:workdir'),
+  logdir: () => ipcRenderer.invoke('app:logdir'),
+  openLogs: () => ipcRenderer.invoke('app:openlogs')
 });

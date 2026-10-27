@@ -31,6 +31,7 @@
   D.buildBase = async function (o, onProgress, cancel) {
     const out = (await api().workdir()) + '/' + 'ortomosaicos/' + o.name.replace(/[^\w\-]+/g, '_') + '_' + Date.now();
     const meta = await D.call('mosaic', { files: o.files, out, res_cm: o.outRes || null, quality: 92 }, (p, m) => onProgress && onProgress(p * 0.9, m), cancel);
+    const timing = { start: Math.round(meta.started * 1000), end: Math.round(meta.finished * 1000), seconds: meta.seconds, log: meta.log, fallback: !!meta.single_process_fallback, workers: meta.workers, stages: meta.timings };
     onProgress && onProgress(0.92, 'Abriendo ortomosaico…');
     const T = await D.call('open_tiles', { dir: meta.dir });
     const g = T.mpp, k = AZ.mPerDeg(T.lat0);
@@ -39,7 +40,7 @@
     return {
       tiled: { url: T.url, server: T.server, levels: T.levels, tile: T.tile, w0: T.w, h0: T.h, g, mppV, dir: meta.dir, photos: T.photos, seconds: T.seconds },
       polyNative: T.poly_px, mpp: mppV, geo: { lat: T.lat0 + cN / T.ky, lon: T.lon0 + cE / T.kx, rtk: o.rtk },
-      note: T.photos + ' fotos · ' + (g * 100).toFixed(1) + ' cm/px · ' + T.w.toLocaleString('es-AR') + '×' + T.h.toLocaleString('es-AR') + ' px · ' + T.seconds + ' s', canvas: null
+      note: T.photos + ' fotos · ' + (g * 100).toFixed(1) + ' cm/px · ' + T.w.toLocaleString('es-AR') + '×' + T.h.toLocaleString('es-AR') + ' px · ' + T.seconds + ' s', canvas: null, timing
     };
   };
 
