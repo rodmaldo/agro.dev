@@ -212,23 +212,38 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None):
     if tick: tick('resolver', 0, 1)
     m = len(rows_i)
     w = np.array(wts) / max(wts)
-    # Ecuaciones normales (AᵀA x = Aᵀb), construidas directamente sin la matriz densa m×n: con 1200 fotos la SVD de lstsq
-    # sobre ~9000×1200 era lenta y gastaba memoria; AᵀA es n×n, ralo y se arma en milisegundos.
+    # Ecuaciones normales (AᵀA x = Aᵀb) sin matriz densa. Se resuelven con gradiente conjugado usando solo sumas de numpy
+    # (bincount): NO pasa por BLAS/LAPACK. En el .exe de Windows la primera llamada a LAPACK (lstsq / solve) se colgaba sin error.
     ri, rj = np.array(rows_i), np.array(rows_j)
-    AtA = np.zeros((n, n))
-    np.add.at(AtA, (ri, ri), w * w); np.add.at(AtA, (rj, rj), w * w)
-    np.add.at(AtA, (ri, rj), -w * w); np.add.at(AtA, (rj, ri), -w * w)
-    AtA += 0.02 ** 2                                           # ancla: la ganancia media queda en 1 (fila 0.02·[1…1])
-    AtA += np.eye(n) * 1e-9
+    w2 = w * w
     G = np.ones((n, 3), np.float32)
     # g_i * mi = g_j * mj  ->  log g_i - log g_j = log(mj/mi)
     B = np.zeros((n, 3))
     for c in range(3):
-        wb = np.array(vals[c]) * w * w
-        np.add.at(B[:, c], ri, wb); np.add.at(B[:, c], rj, -wb)
-    X = np.linalg.solve(AtA, B)
-    G[:] = np.exp(np.clip(X, -0.5, 0.5))
+        wb = np.array(vals[c]) * w2
+        B[:, c] = np.bincount(ri, wb, n) - np.bincount(rj, wb, n)
+    G[:] = np.exp(np.clip(_cg_laplacian(ri, rj, w2, B, n), -0.5, 0.5))
     return G
+
+
+def _cg_laplacian(ri, rj, w2, B, n, anchor=0.02 ** 2, tol=1e-9, max_it=20000):
+    """Resuelve (L + anchor·11ᵀ + 1e-9·I) X = B, con L el laplaciano del grafo de pares de fotos (pesos w2). Gradiente conjugado con
+    precondicionador de Jacobi; el ancla deja la ganancia media en 1. Devuelve X (n×k)."""
+    def mv(x):
+        d = w2 * (x[ri] - x[rj])
+        return np.bincount(ri, d, n) - np.bincount(rj, d, n) + anchor * x.sum() + 1e-9 * x
+    dg = np.bincount(ri, w2, n) + np.bincount(rj, w2, n) + anchor + 1e-9
+    X = np.zeros_like(B)
+    for c in range(B.shape[1]):
+        b = B[:, c]; x = np.zeros(n); r = b.copy(); z = r / dg; pv = z.copy(); rz = (r * z).sum(); nb = np.sqrt((b * b).sum()) + 1e-30
+        for _ in range(max_it):
+            if np.sqrt((r * r).sum()) / nb < tol:
+                break
+            Ap = mv(pv); al = rz / max((pv * Ap).sum(), 1e-300)
+            x += al * pv; r -= al * Ap; z = r / dg
+            rz2 = (r * z).sum(); pv = z + (rz2 / max(rz, 1e-300)) * pv; rz = rz2
+        X[:, c] = x
+    return X
 
 
 # ----------------------------------------------------------------------------------------------- franjas
@@ -443,6 +458,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         chk()
         fr_ = {'miniaturas': 0.0 + 0.5 * i / n, 'pares': 0.5 + 0.45 * i / n, 'resolver': 0.95}[stage]
         txt = {'miniaturas': 'miniaturas %d/%d' % (i, n), 'pares': 'comparando fotos vecinas %d/%d' % (i, n), 'resolver': 'resolviendo ganancias'}[stage]
+        if stage == 'resolver': L('mosaico: resolviendo ganancias de exposición')
         prog(0.08 + 0.04 * fr_, 'Igualando exposición entre fotos · ' + txt)
     gains = solve_gains(P, fr, prof, rb, g, tick=gtick)
     tm['exposición'] = round(time.time() - ts, 1); L('mosaico: exposición lista en %.1f s' % tm['exposición'])

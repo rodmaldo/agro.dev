@@ -17,6 +17,10 @@ Diseño:
     en mosaicos de 512 px. Los niveles de zoom salen de las vistas reducidas (overviews) del GeoTIFF.
 """
 import json, os, re, shutil, subprocess, sys, threading, time, uuid, io, math
+
+# BLAS en un solo hilo ANTES de importar numpy (los procesos de render heredan el entorno): evita bloqueos de OpenBLAS en el .exe de Windows
+for _k in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
+    os.environ.setdefault(_k, '1')
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections import OrderedDict
 
