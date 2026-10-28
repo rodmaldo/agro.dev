@@ -60,10 +60,19 @@
     for (let i = 0; i < n; i++) if (S.man[i]) { S.badd[i] = 1; if (S.berase) S.berase[i] = 0; c++; }
     S.man = null; S.meta.man = null; AZ.mergeDet(S); return c;
   };
-  AZ.addHist = function (S) {
-    const id = 'h' + (++S.seq), k = S.hl.length;
-    S.hl.push({ id, name: 'Histograma ' + (k + 1), color: BUF_TONES[k % BUF_TONES.length], vis: true, inc: true, idx: S.idxName || 'exg', range: null, mask: new Uint8Array(NN(S)), prev: null });
+  /* idxKey: índice sobre el que se trabaja ('exg', 'bri', 'sat', 'ndvi'); name: nombre de la capa */
+  AZ.addHist = function (S, idxKey, name) {
+    const id = 'h' + (++S.seq), k = S.hl.length, ix = idxKey && S.idx[idxKey] ? idxKey : (S.idxName || 'exg');
+    S.hl.push({ id, name: name || ('Histograma ' + (k + 1)), color: BUF_TONES[k % BUF_TONES.length], vis: true, inc: true, idx: ix, range: null, mask: new Uint8Array(NN(S)), prev: null });
     AZ.mchange(S); return id;
+  };
+  /* Fusiona el búfer dentro de la detección principal (queda una sola capa, más grande). El búfer se apaga. */
+  AZ.combineBuf = function (S) {
+    const n = NN(S); if (!S.meta.buf.on) return 0;
+    AZ.calcBuf(S);
+    if (!S.badd || S.badd.length !== n) S.badd = new Uint8Array(n);
+    let c = 0; for (let i = 0; i < n; i++) if (S.buf[i] && S.inside[i]) { S.badd[i] = 1; if (S.berase) S.berase[i] = 0; c++; }
+    S.meta.buf.on = false; AZ.mergeDet(S); AZ.calcBuf(S); return c;
   };
   AZ.removeLayer = function (S, id) {
     if (id === 'man') { S.man = null; S.meta.man = null; } else { const k = S.hl.findIndex(l => l.id === id); if (k >= 0) S.hl.splice(k, 1); }
@@ -138,7 +147,7 @@
     }
     return out;
   }
-  /* Clic = nueva selección · Ctrl+clic = suma (add) */
+  /* Clic = nueva selección · Mayús (o Ctrl) + clic = suma (add) */
   AZ.wandSel = function (S, L, ci, cj, add, tolPct) {
     const c0 = cj * S.gw + ci, a = S.idx[L.idx];
     if (!S.inside[c0]) return 'Ese punto está fuera del límite del lote';

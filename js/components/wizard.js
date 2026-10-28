@@ -44,6 +44,7 @@
           job.base = base; job.note = base.note; job.timing = base.timing;
           dlog('ortomosaico listo · ' + base.note);
           await AZFiles.applyTiled(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det', (p, m) => upd(0.92 + 0.08 * p, m), cancel.current);
+          try { AZApi.fields.update(field.id, { ha: +AZ.coverHa(S).toFixed(2), updated: new Date().toISOString() }); } catch (e) { }
           setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
           return;
         }

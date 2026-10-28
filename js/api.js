@@ -38,14 +38,40 @@
       const j = { user: user.toLowerCase(), token: 'local' }; store.set(j); return j;
     },
 
-    /* Terrenos / proyectos (campos): se guardan en este navegador */
+    /* Proyectos (p. ej. una estancia) que agrupan lotes. Se guardan en este navegador */
+    farms: {
+      list() { try { return JSON.parse(localStorage.getItem('agro.farms') || '[]'); } catch (e) { return []; } },
+      save(l) { try { localStorage.setItem('agro.farms', JSON.stringify(l)); } catch (e) { } },
+      create(name) { const f = { id: 'r' + Date.now().toString(36), name: name.trim(), created: new Date().toISOString() }; const l = this.list(); l.push(f); this.save(l); return f; },
+      rename(id, name) { this.save(this.list().map(f => f.id === id ? { ...f, name: name.trim() } : f)); },
+      remove(id) { this.save(this.list().filter(f => f.id !== id)); root.AZApi.fields.removeFarm(id); }
+    },
+
+    /* Lotes (terrenos) dentro de un proyecto: nombre, hectáreas, miniatura del último guardado */
     fields: {
-      list() { try { return JSON.parse(localStorage.getItem('agro.fields') || '[]'); } catch (e) { return []; } },
-      create(name) {
-        const f = { id: 'f' + Date.now().toString(36), name: name.trim(), created: new Date().toISOString() };
-        const l = this.list(); l.push(f); try { localStorage.setItem('agro.fields', JSON.stringify(l)); } catch (e) { } return f;
+      all() { try { return JSON.parse(localStorage.getItem('agro.fields') || '[]'); } catch (e) { return []; } },
+      write(l) { try { localStorage.setItem('agro.fields', JSON.stringify(l)); return true; } catch (e) { return false; } },
+      /* lotes de un proyecto; los lotes viejos (sin proyecto) se agrupan en "Mis lotes" */
+      list(farmId) {
+        const all = this.all();
+        if (farmId === undefined) return all;
+        if (all.some(f => !f.farmId)) {
+          const farms = root.AZApi.farms; let g = farms.list().find(x => x.legacy);
+          if (!g) { g = { id: 'r' + Date.now().toString(36), name: 'Mis lotes', created: new Date().toISOString(), legacy: true }; const l = farms.list(); l.push(g); farms.save(l); }
+          this.write(all.map(f => f.farmId ? f : { ...f, farmId: g.id }));
+        }
+        return this.all().filter(f => f.farmId === farmId);
       },
-      remove(id) { try { localStorage.setItem('agro.fields', JSON.stringify(this.list().filter(f => f.id !== id))); } catch (e) { } }
+      create(name, farmId) {
+        const f = { id: 'f' + Date.now().toString(36), name: name.trim(), created: new Date().toISOString(), farmId: farmId || null };
+        const l = this.all(); l.push(f); this.write(l); return f;
+      },
+      update(id, patch) {
+        const l = this.all().map(f => f.id === id ? { ...f, ...patch } : f);
+        if (!this.write(l) && patch.thumb) { patch = { ...patch, thumb: null }; this.write(this.all().map(f => f.id === id ? { ...f, ...patch } : f)); }
+      },
+      remove(id) { this.write(this.all().filter(f => f.id !== id)); },
+      removeFarm(farmId) { this.write(this.all().filter(f => f.farmId !== farmId)); }
     },
 
     async saveProject(p) {

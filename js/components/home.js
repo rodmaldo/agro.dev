@@ -9,35 +9,71 @@
     <div className="brand">agro<i>.dev</i></div>${title && html`<span className="crumb">${title}</span>`}
     <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span>${onLogout && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}</header>`;
 
-  /* ---------- 1 · INICIO ---------- */
-  root.AZUI.Home = function Home({ user, onOpen, onLogout }) {
-    const [name, setName] = useState(''); const [list, setList] = useState(() => AZApi.fields.list()); const [err, setErr] = useState('');
+  const fmtHa = n => n ? f1(n, 1) + ' ha' : '— ha';
+  const Thumb = ({ src, label }) => src ? html`<img className="thumb" src=${src} alt=${'Vista del último guardado de ' + label}/>` : html`<div className="thumb empty"><${Ic} n="grid" s=${26}/><span>Sin imagen todavía</span></div>`;
+
+  /* ---------- 1 · INICIO: proyectos (p. ej. una estancia) ---------- */
+  root.AZUI.Home = function Home({ user, onOpenFarm, onLogout }) {
+    const [name, setName] = useState(''); const [err, setErr] = useState(''); const [open, setOpen] = useState(false);
+    const [list, setList] = useState(() => { AZApi.fields.list(null); return AZApi.farms.list(); });
     const [ask, confirmNode] = root.AZUI.useConfirm();
+    const info = f => { const lots = AZApi.fields.list(f.id), last = lots.filter(l => l.thumb).sort((a, b) => (b.updated || '').localeCompare(a.updated || ''))[0]; return { n: lots.length, ha: lots.reduce((a, l) => a + (+l.ha || 0), 0), thumb: last && last.thumb }; };
     const create = e => {
       e.preventDefault(); const n = name.trim();
-      if (n.length < 2) return setErr('Escribí un nombre para el terreno o proyecto');
-      if (list.some(f => f.name.toLowerCase() === n.toLowerCase())) return setErr('Ya existe un terreno con ese nombre');
-      const f = AZApi.fields.create(n); setList(AZApi.fields.list()); setName(''); onOpen(f);
+      if (n.length < 2) return setErr('Escribí un nombre para el proyecto');
+      if (list.some(f => f.name.toLowerCase() === n.toLowerCase())) return setErr('Ya existe un proyecto con ese nombre');
+      const f = AZApi.farms.create(n); setList(AZApi.farms.list()); setName(''); setOpen(false); onOpenFarm(f);
     };
     return html`<div className="screen">
       <${Head} user=${user} onLogout=${onLogout}/>
-      <main className="home">
-        <section className="hcard">
-          <h1>Nuevo terreno o proyecto</h1>
-          <p className="mu">Dale un nombre al lote que vas a zonificar. Después vas a poder importar proyectos y subir las imágenes del vuelo.</p>
+      <main className="proj">
+        <div className="phead"><h1>Proyectos <span className="mu">${list.length}</span></h1>
+          <button className="btn pri" type="button" onClick=${() => setOpen(o => !o)}><${Ic} n="plus" s=${14}/> Nuevo proyecto</button></div>
+        ${open && html`<section className="hcard"><h2>Nuevo proyecto</h2>
+          <p className="mu">Un proyecto agrupa varios lotes, por ejemplo una estancia. Primero ponele un nombre; después cargás las carpetas o archivos del vuelo de cada lote.</p>
           <form onSubmit=${create} className="row" style=${{ alignItems: 'stretch' }}>
-            <input type="text" autoFocus placeholder="Ej.: Lote Norte · Campaña 25/26" aria-label="Nombre del terreno o proyecto" maxLength="60" value=${name} onInput=${e => { setName(e.target.value); setErr(''); }}/>
-            <button className="btn pri fx" type="submit"><${Ic} n="plus" s=${14}/> Crear</button>
-          </form>
-          <div className="err" role="alert">${err}</div>
-        </section>
-        <section className="hcard">
-          <h2>Terrenos <span className="mu">${list.length}</span></h2>
-          ${!list.length && html`<div className="mu">Todavía no creaste ninguno.</div>`}
-          <ul className="flds">${list.slice().reverse().map(f => html`<li key=${f.id}>
-            <button type="button" className="fopen" onClick=${() => onOpen(f)}><b>${f.name}</b><span className="mu">${new Date(f.created).toLocaleDateString('es-AR')}</span></button>
-            <button type="button" className="lnk" aria-label=${'Eliminar ' + f.name} onClick=${() => ask('Se elimina el terreno "' + f.name + '" de la lista. Los archivos de las fotos no se borran.', 'Eliminar', '¿Eliminar terreno?').then(ok => { if (ok) { AZApi.fields.remove(f.id); setList(AZApi.fields.list()); } })}><${Ic} n="trash" s=${14}/></button></li>`)}</ul>
-        </section>
+            <input type="text" autoFocus placeholder="Ej.: Estancia La Esperanza" aria-label="Nombre del proyecto" maxLength="60" value=${name} onInput=${e => { setName(e.target.value); setErr(''); }}/>
+            <button className="btn pri fx" type="submit">Crear proyecto</button></form>
+          <div className="err" role="alert">${err}</div></section>`}
+        ${!list.length && !open && html`<section className="hcard"><h2>Todavía no tenés proyectos</h2><p className="mu">Creá el primero con <b>Nuevo proyecto</b>. Adentro vas a poder cargar todos los lotes del mismo establecimiento.</p></section>`}
+        <div className="cards">${list.slice().reverse().map(f => { const i = info(f); return html`<article key=${f.id} className="card">
+          <button type="button" className="cbody" onClick=${() => onOpenFarm(f)} aria-label=${'Abrir proyecto ' + f.name}><${Thumb} src=${i.thumb} label=${f.name}/>
+            <div className="ctxt"><b>${f.name}</b><span className="mu">${i.n} ${i.n === 1 ? 'lote' : 'lotes'} · ${fmtHa(i.ha)}</span></div></button>
+          <button type="button" className="lnk cdel" aria-label=${'Eliminar ' + f.name} onClick=${() => ask('Se elimina el proyecto "' + f.name + '" y sus lotes de la lista. Los archivos de las fotos no se borran.', 'Eliminar', '¿Eliminar proyecto?').then(ok => { if (ok) { AZApi.farms.remove(f.id); setList(AZApi.farms.list()); } })}><${Ic} n="trash" s=${14}/></button></article>`; })}</div>
+      </main>
+      ${confirmNode}
+      <${Foot}/></div>`;
+  };
+
+  /* ---------- 1b · PROYECTO: lotes con su miniatura, hectáreas y cantidad ---------- */
+  root.AZUI.Project = function Project({ user, farm, onOpen, onBack, onLogout }) {
+    const [name, setName] = useState(''); const [err, setErr] = useState(''); const [open, setOpen] = useState(false);
+    const [list, setList] = useState(() => AZApi.fields.list(farm.id));
+    const [ask, confirmNode] = root.AZUI.useConfirm();
+    const create = e => {
+      e.preventDefault(); const n = name.trim();
+      if (n.length < 2) return setErr('Escribí un nombre para el lote');
+      if (list.some(f => f.name.toLowerCase() === n.toLowerCase())) return setErr('Ya hay un lote con ese nombre en este proyecto');
+      const f = AZApi.fields.create(n, farm.id); setList(AZApi.fields.list(farm.id)); setName(''); setOpen(false); onOpen(f);
+    };
+    const totalHa = list.reduce((a, l) => a + (+l.ha || 0), 0);
+    return html`<div className="screen">
+      <${Head} user=${user} onLogout=${onLogout} back=${onBack} title=${farm.name}/>
+      <main className="proj">
+        <div className="phead"><div><h1>${farm.name}</h1><span className="mu">${list.length} ${list.length === 1 ? 'lote' : 'lotes'} · ${fmtHa(totalHa)}</span></div>
+          <button className="btn pri" type="button" onClick=${() => setOpen(o => !o)}><${Ic} n="plus" s=${14}/> Nuevo lote</button></div>
+        ${open && html`<section className="hcard"><h2>Nuevo lote</h2>
+          <p className="mu">Ponele nombre al lote. En el paso siguiente importás las carpetas o archivos del vuelo.</p>
+          <form onSubmit=${create} className="row" style=${{ alignItems: 'stretch' }}>
+            <input type="text" autoFocus placeholder="Ej.: Lote 5" aria-label="Nombre del lote" maxLength="60" value=${name} onInput=${e => { setName(e.target.value); setErr(''); }}/>
+            <button className="btn pri fx" type="submit">Crear lote</button></form>
+          <div className="err" role="alert">${err}</div></section>`}
+        ${!list.length && !open && html`<section className="hcard"><h2>Este proyecto no tiene lotes</h2><p className="mu">Agregá el primero con <b>Nuevo lote</b>.</p></section>`}
+        <div className="cards">${list.slice().reverse().map(f => html`<article key=${f.id} className="card">
+          <button type="button" className="cbody" onClick=${() => onOpen(f)} aria-label=${'Abrir lote ' + f.name}><${Thumb} src=${f.thumb} label=${f.name}/>
+            <div className="ctxt"><b>${f.name}</b><span className="mu">${fmtHa(f.ha)}${f.inf != null ? ' · infértil ' + f1(f.inf, 1) + ' ha' : ''}</span>
+              <span className="mu">${f.updated ? 'Guardado ' + new Date(f.updated).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : 'Creado ' + new Date(f.created).toLocaleDateString('es-AR')}</span></div></button>
+          <button type="button" className="lnk cdel" aria-label=${'Eliminar ' + f.name} onClick=${() => ask('Se elimina el lote "' + f.name + '" del proyecto. Los archivos de las fotos no se borran.', 'Eliminar', '¿Eliminar lote?').then(ok => { if (ok) { AZApi.fields.remove(f.id); setList(AZApi.fields.list(farm.id)); } })}><${Ic} n="trash" s=${14}/></button></article>`)}</div>
       </main>
       ${confirmNode}
       <${Foot}/></div>`;

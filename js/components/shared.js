@@ -30,8 +30,8 @@
   };
 
   /* barra de herramientas vertical */
-  U.Rail = function Rail({ tools, tool, onTool }) {
-    return html`<div className="rail" role="toolbar" aria-label="Herramientas">${tools.map(t => html`<button key=${t[0]} type="button" data-tip=${t[2]} aria-label=${t[2]} aria-pressed=${tool === t[0]} className=${tool === t[0] ? 'on' : ''} onClick=${() => onTool(t[0])}><${Ic} n=${t[1]} s=${18}/></button>`)}</div>`;
+  U.Rail = function Rail({ tools, tool, onTool, badge, col }) {
+    return html`<div className=${'rail' + (col ? ' col' : '')} role="toolbar" aria-label="Herramientas">${tools.map(t => html`<button key=${t[0]} type="button" data-tip=${t[2]} aria-label=${t[2]} aria-pressed=${tool === t[0]} className=${tool === t[0] ? 'on' : ''} onClick=${() => onTool(t[0])}><${Ic} n=${t[1]} s=${18}/>${badge && badge[t[0]] && html`<i className="bdg">${badge[t[0]]}</i>`}</button>`)}</div>`;
   };
 
   /* pasos del asistente */

@@ -75,13 +75,13 @@
     g.setTransform(v.z, 0, 0, v.z, v.x, v.y);
     const lw = p => p / v.z, cs = S.cs, gw = S.gw, gh = S.gh, M = S.meta;
 
-    if (o.vis.sat) { g.globalAlpha = o.satOp / 100; AZGeo.drawTiles(g, S, v, c.width, c.height, redraw); g.globalAlpha = 1; }
+    if (o.vis.sat && !o.gridHeld) { g.globalAlpha = o.satOp / 100; AZGeo.drawTiles(g, S, v, c.width, c.height, redraw); g.globalAlpha = 1; }
     if (S.orth && o.vis.ortho) { g.globalAlpha = o.orthOp / 100; g.imageSmoothingEnabled = true; g.drawImage(S.orth, 0, 0); g.globalAlpha = 1; }
     else if (S.tiled && o.vis.ortho) { g.globalAlpha = o.orthOp / 100; drawTiled(g, S, c, redraw); g.globalAlpha = 1; }
     if (!S.orth && !S.tiled) return;
 
     /* Antes / después: a la izquierda del divisor queda el ortomosaico limpio; a la derecha, las capas de análisis */
-    if (gw) {
+    if (gw && !o.gridHeld) {
       const split = o.ba ? Math.round(o.baPos * c.width) : 0;
       g.save();
       if (o.ba) { g.setTransform(1, 0, 0, 1, 0, 0); g.beginPath(); g.rect(split, 0, c.width - split, c.height); g.clip(); g.setTransform(v.z, 0, 0, v.z, v.x, v.y); }
@@ -113,7 +113,7 @@
 
     /* Límite: siempre visible (también en el lado "antes") para seguir delimitando sobre el ortomosaico limpio */
     const pl = o.tool === 'poly' && S.tmp.length ? S.tmp : S.poly;
-    if (o.vis.lim && pl.length) {
+    if (o.vis.lim && pl.length && !o.gridHeld) {
       g.strokeStyle = '#fff'; g.lineWidth = lw(1.5); g.setLineDash([lw(8), lw(5)]); g.beginPath();
       pl.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]));
       if (pl === S.tmp && o.mouse) g.lineTo(o.mouse[0], o.mouse[1]); else g.closePath();

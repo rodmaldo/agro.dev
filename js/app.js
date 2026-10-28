@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { useState, useRef } = React;
-  const { html, Splash, Login, Home, Field, Wizard, Dashboard } = AZUI;
+  const { html, Splash, Login, Home, Project, Field, Wizard, Dashboard } = AZUI;
 
   const newJob = () => ({ items: [], info: null, preset: null, base: null, note: '', presetDone: false });
   function initCfg(info, preset) {
@@ -19,6 +19,7 @@
   function App() {
     const [stage, setStage] = useState('splash');
     const [user, setUser] = useState(null);
+    const [farm, setFarm] = useState(null);
     const [field, setField] = useState(null);
     const [job, setJobS] = useState(newJob);
     const [cfg, setCfg] = useState(null);
@@ -28,14 +29,16 @@
     const setJob = f => setJobS(j => { const n = typeof f === 'function' ? f(j) : f; jobR.current = n; return n; });
 
     const enter = () => { const s = AZApi.session(); if (s) { setUser(s.user); setStage('home'); } else setStage('login'); };
-    const logout = () => { AZApi.logout(); setUser(null); setField(null); setJob(newJob()); S.current = AZ.newState(); setStage('splash'); };
+    const logout = () => { AZApi.logout(); setUser(null); setFarm(null); setField(null); setJob(newJob()); S.current = AZ.newState(); setStage('splash'); };
+    const openFarm = f => { setFarm(f); setStage('proj'); };
     const openField = f => { S.current = AZ.newState(); setJob(newJob()); setField(f); setCfg(null); setStage('field'); };
 
-    if (stage === 'home') return html`<${Home} user=${user} onOpen=${openField} onLogout=${logout}/>`;
-    if (stage === 'field') return html`<${Field} user=${user} field=${field} job=${job} setJob=${setJob} onBack=${() => setStage('home')} onNext=${() => { setCfg(initCfg(job.info, job.preset)); setWkey(k => k + 1); setStage('wizard'); }} onLogout=${logout}/>`;
+    if (stage === 'home') return html`<${Home} user=${user} onOpenFarm=${openFarm} onLogout=${logout}/>`;
+    if (stage === 'proj' && farm) return html`<${Project} user=${user} farm=${farm} onOpen=${openField} onBack=${() => setStage('home')} onLogout=${logout}/>`;
+    if (stage === 'field') return html`<${Field} user=${user} field=${field} job=${job} setJob=${setJob} onBack=${() => setStage('proj')} onNext=${() => { setCfg(initCfg(job.info, job.preset)); setWkey(k => k + 1); setStage('wizard'); }} onLogout=${logout}/>`;
     if (stage === 'wizard' && cfg) return html`<${Wizard} key=${wkey} user=${user} field=${field} job=${job} S=${S.current} cfg=${cfg} setCfg=${setCfg} initStep=${job.base ? 1 : 0}
       onBack=${() => setStage('field')} onDone=${() => setStage('dash')} onLogout=${logout}/>`;
-    if (stage === 'dash') return html`<${Dashboard} user=${user} field=${field} S=${S.current} cfg=${cfg} job=${job} onLogout=${logout} onHome=${() => setStage('home')}
+    if (stage === 'dash') return html`<${Dashboard} user=${user} field=${field} S=${S.current} cfg=${cfg} job=${job} onLogout=${logout} onHome=${() => setStage('proj')}
       onReconfig=${() => { setWkey(k => k + 1); setStage('wizard'); }}/>`;
     return html`<${Splash} phase=${stage} onEnter=${enter}>
       ${stage === 'login' && html`<${Login} onOk=${r => { setUser(r.user); setStage('home'); }} onCancel=${() => setStage('splash')}/>`}
