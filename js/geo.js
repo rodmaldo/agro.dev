@@ -86,16 +86,19 @@
       g.save(); g.translate(S.W / 2, S.H / 2); g.rotate(-th); g.translate(-S.W / 2, -S.H / 2);
     }
     for (let tries = 0; tries < 8; tries++) {
-      const n = Math.pow(2, z), s = MPP0 * cosl / n / S.mpp;
+      /* Web Mercator trata la Tierra como esfera; el terreno real es el elipsoide WGS84: en E-O un píxel de tesela mide N·cosφ y en N-S M·cosφ
+         (N y M = radios de curvatura). Sin esta corrección la imagen satelital queda ~0,1 % (E-O) y ~0,4 % (N-S) fuera de escala: ~5 m a 1,5 km del centro. */
+      const E2 = 0.00669437999014, sp2 = Math.sin(rad) * Math.sin(rad), fx = 1 / Math.sqrt(1 - E2 * sp2), fy = (1 - E2) / Math.pow(1 - E2 * sp2, 1.5);
+      const n = Math.pow(2, z), s = MPP0 * cosl / n / S.mpp, sx = s * fx, sy = s * fy;
       const cx = (lon + 180) / 360 * 256 * n, cy = (1 - Math.log(Math.tan(rad) + 1 / cosl) / Math.PI) / 2 * 256 * n;
-      const tx0 = Math.max(0, Math.floor((cx + (vx0 - S.W / 2) / s) / 256)), tx1 = Math.min(n - 1, Math.floor((cx + (vx1 - S.W / 2) / s) / 256));
-      const ty0 = Math.max(0, Math.floor((cy + (vy0 - S.H / 2) / s) / 256)), ty1 = Math.min(n - 1, Math.floor((cy + (vy1 - S.H / 2) / s) / 256));
+      const tx0 = Math.max(0, Math.floor((cx + (vx0 - S.W / 2) / sx) / 256)), tx1 = Math.min(n - 1, Math.floor((cx + (vx1 - S.W / 2) / sx) / 256));
+      const ty0 = Math.max(0, Math.floor((cy + (vy0 - S.H / 2) / sy) / 256)), ty1 = Math.min(n - 1, Math.floor((cy + (vy1 - S.H / 2) / sy) / 256));
       if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) > 90 && z > 2) { z--; continue; }
       for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
-        const X = S.W / 2 + (tx * 256 - cx) * s, Y = S.H / 2 + (ty * 256 - cy) * s, w = 256 * s + 0.6;
+        const X = S.W / 2 + (tx * 256 - cx) * sx, Y = S.H / 2 + (ty * 256 - cy) * sy, w = 256 * sx + 0.6, h = 256 * sy + 0.6;
         const img = tile(z, tx, ty, redraw);
-        if (img) g.drawImage(img, X, Y, w, w);
-        else { const par = z > 2 ? loaded(z - 1, tx >> 1, ty >> 1) : null; if (par) g.drawImage(par, (tx & 1) * 128, (ty & 1) * 128, 128, 128, X, Y, w, w); }
+        if (img) g.drawImage(img, X, Y, w, h);
+        else { const par = z > 2 ? loaded(z - 1, tx >> 1, ty >> 1) : null; if (par) g.drawImage(par, (tx & 1) * 128, (ty & 1) * 128, 128, 128, X, Y, w, h); }
       }
       break;
     }

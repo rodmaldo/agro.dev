@@ -75,6 +75,7 @@
     S.meta.buf.on = false; AZ.mergeDet(S); AZ.calcBuf(S); return c;
   };
   AZ.removeLayer = function (S, id) {
+    if (id === 'amb') { S.amb = null; AZ.mchange(S); return; }
     if (id === 'man') { S.man = null; S.meta.man = null; } else { const k = S.hl.findIndex(l => l.id === id); if (k >= 0) S.hl.splice(k, 1); }
     AZ.mchange(S);
   };
@@ -82,7 +83,7 @@
 
   /* ---- orden de apilado (primero = más arriba) y combinación de varias capas ---- */
   AZ.layerIds = function (S) {
-    const ex = [...S.hl.map(l => l.id).reverse(), ...(S.man ? ['man'] : []), 'det', ...(S.meta.buf.on ? ['buf'] : [])];
+    const ex = [...(S.amb ? ['amb'] : []), ...S.hl.map(l => l.id).reverse(), ...(S.man ? ['man'] : []), 'det', ...(S.meta.buf.on ? ['buf'] : [])];
     const z = (S.zord || []).filter(id => ex.includes(id)), fresh = ex.filter(id => !z.includes(id));
     return [...fresh, ...z];
   };
@@ -109,6 +110,55 @@
     for (const id of ok) if (id !== target) { if (id === 'man') { S.man = null; S.meta.man = null; } else { const k = S.hl.findIndex(l => l.id === id); if (k >= 0) S.hl.splice(k, 1); } }
     if (target === 'det') AZ.mergeDet(S); else AZ.mchange(S);
     return { target, cells, names };
+  };
+
+  /* ---- Ambientación: el índice de color dividido en 5 niveles (cada uno con su color y su dosis en L/ha) ---- */
+  AZ.AMB_PAL = {
+    rv: { name: 'Rojo → Verde', c: ['#d7191c', '#fdae61', '#ffffbf', '#a6d96a', '#1a9641'] },
+    mv: { name: 'Marrón → Verde azulado', c: ['#8c510a', '#d8b365', '#f6e8c3', '#5ab4ac', '#01665e'] },
+    az: { name: 'Celestes → Azul', c: ['#eff3ff', '#bdd7e7', '#6baed6', '#3182bd', '#08519c'] },
+    vi: { name: 'Violeta → Amarillo', c: ['#440154', '#3b528b', '#21908d', '#5dc863', '#fde725'] },
+    na: { name: 'Naranjas', c: ['#fff5eb', '#fdd0a2', '#fd8d3c', '#d94801', '#7f2704'] }
+  };
+  AZ.addAmb = function (S, idxKey) {
+    if (S.amb) return false;
+    const ix = idxKey && S.idx[idxKey] ? idxKey : (S.idx.ndvi ? 'ndvi' : 'exg');
+    S.amb = { name: 'Ambientación', vis: true, inc: true, color: AZ.AMB_PAL.rv.c[4], idx: ix, pal: 'rv', colors: AZ.AMB_PAL.rv.c.slice(), rates: [0, 0, 40, 40, 40], th: [0, 0, 0, 0], cls: null, mode: 'igual', lo: 0, hi: 1 };
+    AZ.ambAuto(S, 'igual'); return true;
+  };
+  AZ.ambPalette = function (S, key) { const p = AZ.AMB_PAL[key]; if (!p || !S.amb) return; S.amb.pal = key; S.amb.colors = p.c.slice(); S.amb.color = p.c[4]; S.ver++; };
+  /* modo 'igual': 5 intervalos iguales del rango (percentiles 2–98 %) · 'perc': 5 niveles con la misma superficie */
+  AZ.ambAuto = function (S, mode) {
+    const A = S.amb; if (!A) return; const a = S.idx[A.idx], n = NN(S), v = [];
+    const stp = Math.max(1, Math.floor(n / 200000));
+    for (let i = 0; i < n; i += stp) if (S.inside[i] && S.valid[i]) v.push(a[i]);
+    if (v.length < 10) { const [lo, hi] = S.lim[A.idx]; A.lo = lo; A.hi = hi; A.th = [1, 2, 3, 4].map(k => lo + (hi - lo) * k / 5); }
+    else {
+      v.sort((x, y) => x - y); const q = p => v[Math.min(v.length - 1, Math.max(0, Math.round(p * (v.length - 1))))];
+      const lo = q(0.02), hi = q(0.98); A.lo = lo; A.hi = hi;
+      A.th = mode === 'perc' ? [0.2, 0.4, 0.6, 0.8].map(q) : [1, 2, 3, 4].map(k => lo + (hi - lo) * k / 5);
+    }
+    A.mode = mode; AZ.ambClassify(S);
+  };
+  AZ.ambIdx = function (S, key) { if (!S.amb || !S.idx[key]) return; S.amb.idx = key; AZ.ambAuto(S, S.amb.mode); };
+  AZ.ambSetTh = function (S, k, v) { const A = S.amb, e = (A.hi - A.lo) * 0.002; A.th[k] = Math.max(k ? A.th[k - 1] + e : -Infinity, Math.min(k < 3 ? A.th[k + 1] - e : Infinity, v)); AZ.ambClassify(S); };
+  AZ.ambClassify = function (S) {
+    const A = S.amb, n = NN(S), a = S.idx[A.idx], c = new Uint8Array(n).fill(255), t = A.th;
+    for (let i = 0; i < n; i++) if (S.inside[i]) { const x = S.valid[i] ? a[i] : -Infinity; c[i] = x < t[0] ? 0 : x < t[1] ? 1 : x < t[2] ? 2 : x < t[3] ? 3 : 4; }
+    A.cls = c; S.ver++;
+  };
+  /* superficie (ha) y % por nivel */
+  AZ.ambStats = function (S) {
+    const A = S.amb, ch = AZ.cellHa(S), n = NN(S), ha = [0, 0, 0, 0, 0]; if (!A || !A.cls) return null;
+    for (let i = 0; i < n; i++) if (S.inside[i] && A.cls[i] < 5) ha[A.cls[i]] += ch;
+    return { ha, tot: ha.reduce((x, y) => x + y, 0) };
+  };
+  /* Los niveles con dosis 0 pasan a ser Detección de zonas (infértil): actualiza fértil / infértil */
+  AZ.ambToDet = function (S) {
+    const A = S.amb, n = NN(S); if (!A || !A.cls) return 0; let c = 0;
+    if (!S.badd || S.badd.length !== n) S.badd = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (S.inside[i] && A.cls[i] < 5 && !(+A.rates[A.cls[i]] > 0)) { S.badd[i] = 1; if (S.berase) S.berase[i] = 0; c++; }
+    AZ.mergeDet(S); return c;
   };
 
   /* ---- pincel / borrador: pintan celdas completas (respetan el tamaño de la grilla). n = diámetro en celdas ---- */

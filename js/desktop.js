@@ -54,7 +54,7 @@
     const mppV = Math.max(g, Math.min(g * 8, 0.25));
     return {
       tiled: { url: T.url, server: T.server, levels: T.levels, tile: T.tile, w0: T.w, h0: T.h, g, mppV, dir: meta.dir, photos: T.photos, seconds: T.seconds },
-      polyNative: T.poly_px, mpp: mppV, geo: { lat: T.lat0 + cN / T.ky, lon: T.lon0 + cE / T.kx, rtk: o.rtk },
+      polyNative: T.poly_px, mpp: mppV, geo: (T.exact ? { ...AZ.enuToGeo(T.lat0, T.lon0, cE, cN), lat0: T.lat0, lon0: T.lon0, cE, cN, exact: true, rtk: o.rtk } : { lat: T.lat0 + cN / T.ky, lon: T.lon0 + cE / T.kx, rtk: o.rtk }),
       note: T.photos + ' fotos · ' + (g * 100).toFixed(1) + ' cm/px · ' + T.w.toLocaleString('es-AR') + '×' + T.h.toLocaleString('es-AR') + ' px · ' + T.seconds + ' s', canvas: null, timing
     };
   };

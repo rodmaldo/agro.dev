@@ -42,6 +42,50 @@
       onPointerDown=${down} onPointerMove=${move} onPointerUp=${() => { drag.current = null; }}></canvas>`;
   }
 
+
+  /* ---------- Ambientación: histograma con 4 umbrales arrastrables y tabla de 5 niveles (Lt/ha) ---------- */
+  function AmbHist({ S, A, rev, onTh }) {
+    const ref = useRef(), drag = useRef(null);
+    const bins = useMemo(() => (S.idx[A.idx] ? AZ.histBins(S, A.idx, 64) : null), [S.mver, A.idx]);
+    const span = bins ? bins.hi - bins.lo : 1, X = v => (v - bins.lo) / span;
+    useEffect(() => {
+      const c = ref.current; if (!c || !bins) return; const g = c.getContext('2d'), w = c.width, h = c.height; g.clearRect(0, 0, w, h);
+      const B = 64; let mx = 1; for (let b = 0; b < B; b++) mx = Math.max(mx, bins.rest[b] + bins.det[b]);
+      const bw = w / B, t = A.th;
+      for (let b = 0; b < B; b++) {
+        const v = bins.lo + (b + 0.5) / B * span, k = v < t[0] ? 0 : v < t[1] ? 1 : v < t[2] ? 2 : v < t[3] ? 3 : 4, hh = Math.sqrt((bins.rest[b] + bins.det[b]) / mx) * (h - 26);
+        g.fillStyle = A.colors[k]; g.fillRect(b * bw, h - hh - 16, bw - 1, hh);
+      }
+      g.fillStyle = '#fff'; t.forEach(v => { const x = Math.max(1, Math.min(w - 1, X(v) * w)); g.fillRect(x - 1, 0, 2, h - 16); g.beginPath(); g.moveTo(x - 6, h - 3); g.lineTo(x + 6, h - 3); g.lineTo(x, h - 15); g.closePath(); g.fill(); });
+      g.fillStyle = '#7e8b83'; g.font = '10px monospace'; g.fillText(bins.lo.toFixed(2), 2, 10); g.fillText(bins.hi.toFixed(2), w - 34, 10);
+    }, [bins, A.th.join(), A.colors.join(), rev]);
+    if (!bins) return html`<div className="mu">Este índice no está disponible.</div>`;
+    const val = e => { const r = ref.current.getBoundingClientRect(); return bins.lo + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * span; };
+    const down = e => { const v = val(e); let b = 0, d = 1e9; A.th.forEach((x, k) => { if (Math.abs(x - v) < d) { d = Math.abs(x - v); b = k; } }); drag.current = b; ref.current.setPointerCapture(e.pointerId); onTh(b, v); };
+    return html`<canvas ref=${ref} width="420" height="96" aria-label="Histograma de la ambientación: arrastrá los 4 umbrales" style=${{ width: '100%', height: 96, background: '#0a0d0b', cursor: 'ew-resize', touchAction: 'none' }}
+      onPointerDown=${down} onPointerMove=${e => { if (drag.current != null) onTh(drag.current, val(e)); }} onPointerUp=${() => { drag.current = null; }}></canvas>`;
+  }
+
+  function AmbPanel({ S, A, rev, bump, toast, refresh }) {
+    const st = AZ.ambStats(S) || { ha: [0, 0, 0, 0, 0], tot: 0 }, unit = 'L/ha';
+    const vol = A.rates.reduce((s, r, k) => s + (+r || 0) * st.ha[k], 0);
+    return html`<div className="amb">
+      <label className="fld"><span className="fl">Índice de color</span><select value=${A.idx} onChange=${e => { AZ.ambIdx(S, e.target.value); bump(); }}>${Object.keys(S.idx).map(k => html`<option key=${k} value=${k}>${IDX[k] || k}</option>`)}</select></label>
+      <label className="fld"><span className="fl">Gama de colores</span><select value=${A.pal} onChange=${e => { AZ.ambPalette(S, e.target.value); bump(); }}>${Object.entries(AZ.AMB_PAL).map(([k, p]) => html`<option key=${k} value=${k}>${p.name}</option>`)}</select></label>
+      <div className="amb-pal" aria-hidden="true">${A.colors.map(c => html`<i key=${c} style=${{ background: c }}></i>`)}</div>
+      <${AmbHist} S=${S} A=${A} rev=${rev} onTh=${(k, v) => { AZ.ambSetTh(S, k, v); bump(); }}/>
+      <div className="row"><button className=${'btn sm' + (A.mode === 'igual' ? ' pri' : '')} type="button" onClick=${() => { AZ.ambAuto(S, 'igual'); bump(); }}>Intervalos iguales</button><button className=${'btn sm' + (A.mode === 'perc' ? ' pri' : '')} type="button" onClick=${() => { AZ.ambAuto(S, 'perc'); bump(); }}>Igual superficie</button></div>
+      <table className="amb-t"><thead><tr><th></th><th>Nivel</th><th>ha</th><th>%</th><th>${unit}</th></tr></thead><tbody>
+        ${A.rates.map((r, k) => html`<tr key=${k}><td><i className="sw" style=${{ background: A.colors[k] }}></i></td><td>Nivel ${k + 1}</td><td className="n">${f1(st.ha[k], 1)}</td><td className="n">${f1(st.tot ? st.ha[k] / st.tot * 100 : 0, 1)}</td>
+          <td><input type="number" min="0" step="0.5" value=${r} aria-label=${'Dosis del nivel ' + (k + 1) + ' en L/ha'} onInput=${e => { A.rates[k] = e.target.value === '' ? '' : Math.max(0, +e.target.value); S.ver++; bump(); }}/></td></tr>`)}
+      </tbody></table>
+      <div className="kv"><span>Volumen total</span><span>${f1(vol, 0)} L</span></div>
+      <div className="mu">Dosis <b>0</b> = zona infértil: no se aplica. Ejemplo: dejá solo el nivel fértil en 40 L/ha y los demás en 0.</div>
+      <label className="tog" title="Usar esta capa como mapa de dosis al exportar"><input type="checkbox" checked=${!!A.inc} onChange=${e => { A.inc = e.target.checked; S.ver++; bump(); }}/><i></i><span>Usar en la prescripción</span></label>
+      <button className="btn sm" type="button" onClick=${() => { const n = AZ.ambToDet(S); refresh(); toast(n.toLocaleString('es-AR') + ' celdas con dosis 0 pasaron a Detección de zonas (infértil)'); }}>Convertir niveles con dosis 0 a Detección de zonas</button>
+    </div>`;
+  }
+
   function Legend({ S }) {
     const [c, setC] = useState(null);
     useEffect(() => { const f = e => setC(e.detail); addEventListener('az-cursor', f); return () => removeEventListener('az-cursor', f); }, []);
@@ -61,7 +105,7 @@
     const o = { ...ex, field: field.name, version: AZSys.VERSION, machine: AZ.X.MACHINES.find(m => m.id === ex.machine).name, yld };
     const c = useMemo(() => AZ.X.consumption(S, o), [ex, S.mver, S.ver]);
     const set = p => setEx(e => ({ ...e, ...p }));
-    const U = c.unit.split('/')[0], valid = +ex.dose > 0;
+    const U = c.unit.split('/')[0], amb = !!c.amb, valid = amb || +ex.dose > 0;
     const okOnly = (fn) => { if (!valid) return toast('Ingresá una dosis mayor que 0'); try { fn(); } catch (e) { toast('No se pudo exportar: ' + e.message); } };
     const prescription = () => okOnly(() => { const z = AZ.X.prescriptionZip(S, o); AZFiles.download(z.name, z.bytes, 'application/zip'); toast('Prescripción exportada: ' + z.n.toLocaleString('es-AR') + ' polígonos'); });
     const geo = () => okOnly(() => AZFiles.download('agro-dev_' + field.name.replace(/\W+/g, '_') + '.geojson', JSON.stringify(AZ.X.geojson(S, o)), 'application/geo+json'));
@@ -89,21 +133,24 @@
           <div className="mu">${AZ.X.MACHINES.find(m => m.id === ex.machine).note}</div>
           <div className="fld"><span className="fl">Operación</span><${Seg} value=${ex.mode} onChange=${v => set({ mode: v, unit: AZ.X.MODES[v].unit })} opts=${[['apl', 'Aplicación'], ['fer', 'Fertilización'], ['sie', 'Siembra']]}/></div>
           <div className="g2">
-            <label className="fld"><span className="fl">Dosis objetivo en zona fértil</span><div className="row"><input type="number" min="0" step="0.1" value=${ex.dose} onInput=${e => set({ dose: e.target.value })} aria-label="Dosis"/>
+            <label className="fld"><span className="fl">${amb ? 'Dosis de referencia (para el ahorro)' : 'Dosis objetivo en zona fértil'}</span><div className="row"><input type="number" min="0" step="0.1" value=${ex.dose} onInput=${e => set({ dose: e.target.value })} aria-label="Dosis"/>
               ${ex.mode === 'fer' ? html`<select className="fx" value=${ex.unit} onChange=${e => set({ unit: e.target.value })}><option>L/ha</option><option>kg/ha</option></select>` : html`<span className="mu fx">${c.unit}</span>`}</div></label>
             <label className="fld"><span className="fl">Precio por ${U} (opcional)</span><input type="number" min="0" step="0.01" value=${ex.price} onInput=${e => set({ price: e.target.value })} aria-label="Precio"/></label>
           </div>
+          ${amb && html`<div className="kv-box">${S.amb.rates.map((r, k) => html`<div className="kv" key=${k}><span><i className="sw" style=${{ background: S.amb.colors[k], display: 'inline-block', marginRight: 6 }}></i>Nivel ${k + 1}</span><span>${f1(+r || 0, 1)} ${c.unit}</span></div>`)}</div>
+          <div className="mu">Las dosis de cada nivel se editan en la capa Ambientación (Capas → Propiedades).</div>`}
+          <label className="tog"><input type="checkbox" checked=${!!ex.omitZero} onChange=${e => set({ omitZero: e.target.checked })}/><i></i><span>Omitir polígonos con dosis 0 (archivo más liviano)</span></label>
           <div className="kv-box">
             <div className="kv"><span>Lote</span><span>${f1(c.loteHa)} ha</span></div>
-            <div className="kv"><span>A tratar (fértil${S.meta.buf.on ? ', sin buffer' : ''})</span><span>${f1(c.treatHa)} ha</span></div>
-            <div className="kv"><span>Omitido (infértil${S.meta.buf.on ? ' + buffer' : ''})</span><span>${f1(c.skipHa)} ha</span></div>
+            <div className="kv"><span>A tratar (dosis > 0${S.meta.buf.on ? ', sin buffer' : ''})</span><span>${f1(c.treatHa)} ha</span></div>
+            <div className="kv"><span>Sin aplicación (dosis 0${S.meta.buf.on ? ' + buffer' : ''})</span><span>${f1(c.skipHa)} ha</span></div>
             <div className="kv"><span>Consumo aplicando todo el lote</span><span>${f1(c.base, 0)} ${U}</span></div>
             <div className="kv"><span>Consumo con prescripción</span><span>${f1(c.used, 0)} ${U}</span></div>
             <div className="kv"><span><b>Ahorro</b></span><span><b className="sv">${f1(c.save, 0)} ${U} · ${f1(c.savePct)} %</b></span></div>
             <div className="kv"><span>Dosis media sobre el lote</span><span>${f1(c.avg, 2)} ${c.unit}</span></div>
             ${c.price > 0 && html`<div className="kv"><span>Ahorro económico</span><span>$ ${f1(c.money, 0)}</span></div>`}
           </div>
-          <div className="note">Se combinan todas las capas incluidas. Mapa de prescripción: <b>fértil = dosis</b>, <b>infértil${S.meta.buf.on ? ' y buffer' : ''} = 0</b>. Validá el archivo en el display GEN5 con una prueba de campo antes de aplicar; no está verificado en equipos reales.</div>
+          <div className="note">Se combinan todas las capas incluidas. Mapa de prescripción: ${amb ? html`<b>cada nivel = su dosis</b>` : html`<b>fértil = dosis</b>`}, <b>infértil${S.meta.buf.on ? ' y buffer' : ''} = 0</b>. Se exporta un shapefile en la carpeta <b>Rx</b> (WGS84, columna RATE) para displays GEN4 / GEN5. Validá el archivo en el display con una prueba de campo antes de aplicar; no está verificado en equipos reales.</div>
         </div>
         <div className="mf"><button className="btn" type="button" onClick=${geo}>GeoJSON</button><button className="btn" type="button" onClick=${report}>Informe PDF</button><button className="btn pri" type="button" onClick=${prescription}>Prescripción (.zip)</button></div>
       </div></div>`;
@@ -168,15 +215,16 @@
     /* ----- capas ----- */
     const addHistNamed = () => { const id = AZ.addHist(S, 'exg'); set({ active: id, sel: [id], tool: 'wand', heat: 1, ctx: null, add: null, tabB: 'props' }); refresh(); toast('Capa de histograma: fijá el rango en el histograma o usá la selección smart (Mayús suma zonas)'); };
     const addHist = addHistNamed;
+    const addAmb = () => { if (S.amb) { set({ active: 'amb', sel: ['amb'], ctx: null, add: null, tabB: 'props' }); return toast('Ya existe la capa Ambientación'); } AZ.addAmb(S); set({ active: 'amb', sel: ['amb'], tool: 'pan', heat: 0, ctx: null, add: null, tabB: 'props' }); refresh(); toast('Ambientación creada: 5 niveles de color. Poné 0 L/ha en los infértiles y la dosis (ej. 40) en el fértil'); };
     const addNdvi = () => { const real = !!S.idx.ndvi, id = AZ.addHist(S, real ? 'ndvi' : 'exg', real ? 'NDVI' : 'NDVI (aprox. verdor)'); set({ active: id, sel: [id], tool: 'wand', heat: 1, ctx: null, add: null, tabB: 'props' }); refresh(); toast(real ? 'Capa NDVI creada: seleccioná zonas con la selección smart' : 'Este lote no tiene banda NIR cargada: la capa usa el verdor ExG como aproximación del NDVI'); };
     const addMan = () => { if (S.man) return toast('Ya existe una capa de detección manual'); AZ.addManual(S); set({ active: 'man', sel: ['man'], tool: 'brush', ctx: null, add: null }); refresh(); toast('Detección manual creada: pintá con el pincel'); };
     const addBuf = () => { if (M.buf.on) return; M.buf.on = true; M.buf.m = M.buf.m || 2; M.buf.vis = true; AZ.calcBuf(S); set({ active: 'buf', sel: ['buf'], ctx: null, add: null, tabB: 'props' }); bump(); };
     const removeLayer = id => {
-      if (id === 'buf') { M.buf.on = false; AZ.calcBuf(S); } else if (id === 'det') { return toast('La capa de detección principal no se elimina: usá el borrador'); } else AZ.removeLayer(S, id);
+      if (id === 'amb') { AZ.removeLayer(S, 'amb'); } else if (id === 'buf') { M.buf.on = false; AZ.calcBuf(S); } else if (id === 'det') { return toast('La capa de detección principal no se elimina: usá el borrador'); } else AZ.removeLayer(S, id);
       if (uiR.current.active === id) set({ active: 'det', sel: ['det'] }); else set({ sel: (uiR.current.sel || []).filter(x => x !== id) }); refresh();
     };
-    const obj = id => id === 'det' ? M.det : id === 'man' ? M.man : id === 'buf' ? M.buf : S.hl.find(l => l.id === id);
-    const rowOf = id => id === 'det' ? { id, name: M.det.name, kind: 'det' } : id === 'man' ? { id, name: M.man.name, kind: 'man' } : id === 'buf' ? { id, name: 'Buffer · ' + f1(M.buf.m, 1) + ' m', kind: 'buf' } : { id, name: S.hl.find(l => l.id === id).name, kind: 'hist' };
+    const obj = id => id === 'amb' ? S.amb : id === 'det' ? M.det : id === 'man' ? M.man : id === 'buf' ? M.buf : S.hl.find(l => l.id === id);
+    const rowOf = id => id === 'amb' ? { id, name: S.amb.name, kind: 'amb' } : id === 'det' ? { id, name: M.det.name, kind: 'det' } : id === 'man' ? { id, name: M.man.name, kind: 'man' } : id === 'buf' ? { id, name: 'Buffer · ' + f1(M.buf.m, 1) + ' m', kind: 'buf' } : { id, name: S.hl.find(l => l.id === id).name, kind: 'hist' };
     const rows = [
       ...AZ.layerIds(S).map(rowOf),
       { id: 'lim', name: 'Límites del lote', color: '#ffffff', kind: 'lim' },
@@ -229,7 +277,7 @@
 
     const items = {
       file: [{ t: 'Guardar proyecto', on: saveProject }, { t: 'Exportar prescripción / informe…', on: () => set({ exportOpen: true }) }, { sep: 1 }, { t: 'Reconfigurar grilla y puntos…', on: reconfig }, { t: 'Volver al proyecto', on: goHome }],
-      layers: [{ t: 'Combinar capas seleccionadas', on: combine, disabled: combinable.length < 2 && !sel.includes('buf'), k: 'Ctrl+E' }, { sep: 1 }, { t: 'Nueva capa · Histograma', on: addHist }, { t: 'Nueva capa · NDVI', on: addNdvi }, { t: 'Nueva capa · Búfer', on: addBuf, disabled: M.buf.on }, { t: 'Detección manual', on: addMan, disabled: !!S.man }],
+      layers: [{ t: 'Combinar capas seleccionadas', on: combine, disabled: combinable.length < 2 && !sel.includes('buf'), k: 'Ctrl+E' }, { sep: 1 }, { t: 'Nueva capa · Histograma', on: addHist }, { t: 'Nueva capa · NDVI', on: addNdvi }, { t: 'Nueva capa · Ambientación', on: addAmb, disabled: !!S.amb }, { t: 'Nueva capa · Búfer', on: addBuf, disabled: M.buf.on }, { t: 'Detección manual', on: addMan, disabled: !!S.man }],
       view: [{ t: 'Imagen satelital', checked: ui.vis.sat, on: () => set({ vis: { ...ui.vis, sat: ui.vis.sat ? 0 : 1 } }) }, { t: 'Grilla', checked: ui.vis.grid, on: () => set({ vis: { ...ui.vis, grid: ui.vis.grid ? 0 : 1 } }), k: 'Espacio' },
         { t: 'Antes / después', checked: ui.ba, on: () => set({ ba: !ui.ba }), k: 'I' }, { t: 'Ajustar vista', on: () => mapApi.current.fit() }, { sep: 1 },
         { t: 'Panel lateral (capas y funciones)', checked: ui.dockR, on: () => set({ dockR: !ui.dockR }) }],
@@ -300,14 +348,15 @@
           onDragOver=${e => { if (uiR.current.drag) { e.preventDefault(); if (uiR.current.over !== r.id) set({ over: r.id }); } }} onDrop=${e => { e.preventDefault(); drop(mov ? r.id : null); }} onDragEnd=${() => set({ drag: null, over: null })}
           onClick=${e => pick(r, e)} onDoubleClick=${() => { if (r.kind !== 'img') set({ tabB: 'props' }); }} onContextMenu=${() => { if (!sel.includes(r.id)) set({ sel: [r.id], active: r.id }); }}>
           ${mov ? html`<span className="grip" aria-hidden="true" title="Arrastrá para cambiar el orden">⋮⋮</span>` : html`<span className="grip"></span>`}
-          ${o ? html`<input type="color" className="sw" value=${color} aria-label=${'Color de ' + r.name} onClick=${e => e.stopPropagation()} onInput=${e => { o.color = e.target.value; S.ver++; bump(); }}/>` : html`<i className="sw" style=${{ background: color }}></i>`}
+          ${o && r.kind !== 'amb' ? html`<input type="color" className="sw" value=${color} aria-label=${'Color de ' + r.name} onClick=${e => e.stopPropagation()} onInput=${e => { o.color = e.target.value; S.ver++; bump(); }}/>` : html`<i className="sw" style=${{ background: color }}></i>`}
           <span className="nm">${r.name}</span>
           <button type="button" className=${'ic eye' + (on ? '' : ' off')} aria-label=${on ? 'Ocultar ' + r.name : 'Mostrar ' + r.name} aria-pressed=${on} onClick=${e => { e.stopPropagation(); toggleVis(r); }}><${Ic} n=${on ? 'eye' : 'eyeoff'} s=${15}/></button>
         </div>`;
     })}</div>
             <div className="mu lhint">Ctrl+clic: varias capas · Ctrl+E: combinar · clic derecho: más opciones · arrastrá para ordenar</div>`}
-            ${ui.tabB === 'props' && html`<div className="capr"><div className="ph"><span>${act.name}</span><span className="mu">${act.kind === 'det' ? 'Detección IA' : act.kind === 'man' ? 'Detección manual' : act.kind === 'hist' ? 'Histograma / NDVI' : act.kind === 'buf' ? 'Búfer' : act.kind === 'lim' ? 'Límites' : 'Imagen'}</span></div>
+            ${ui.tabB === 'props' && html`<div className="capr"><div className="ph"><span>${act.name}</span><span className="mu">${act.kind === 'det' ? 'Detección IA' : act.kind === 'man' ? 'Detección manual' : act.kind === 'hist' ? 'Histograma / NDVI' : act.kind === 'amb' ? 'Ambientación · 5 niveles' : act.kind === 'buf' ? 'Búfer' : act.kind === 'lim' ? 'Límites' : 'Imagen'}</span></div>
               <div className="pb">
+              ${act.kind === 'amb' && html`<${AmbPanel} S=${S} A=${S.amb} rev=${rev} bump=${bump} toast=${toast} refresh=${refresh}/>`}
               ${(act.kind === 'det' || act.kind === 'man' || act.kind === 'hist') && html`<label className="fld"><span className="fl">Nombre</span><input type="text" maxLength="40" value=${A.name} onInput=${e => { A.name = e.target.value; bump(); }}/></label>
                 <label className="tog" title="Incluir al combinar y exportar"><input type="checkbox" checked=${!!A.inc} onChange=${e => { A.inc = e.target.checked; AZ.mchange(S); refresh(); }}/><i></i><span>Incluir en el resultado y la exportación</span></label>`}
               ${(ui.tool === 'brush' || ui.tool === 'erase') && html`<${Slider} label="Tamaño del pincel" min=${1} max=${40} value=${ui.brushN} fmt=${v => v + ' celdas'} unit=${' · ' + f1(ui.brushN * AZ.cellM(S), 1) + ' m'} onChange=${v => set({ brushN: v })}/>
@@ -347,6 +396,7 @@
         <button type="button" className="mi" role="menuitem" disabled=${M.buf.on} onClick=${addBuf}><span className="ck"></span><span>Búfer</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" onClick=${addHist}><span className="ck"></span><span>Histograma</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" onClick=${addNdvi}><span className="ck"></span><span>NDVI</span><kbd></kbd></button>
+        <button type="button" className="mi" role="menuitem" disabled=${!!S.amb} onClick=${addAmb}><span className="ck"></span><span>Ambientación (5 niveles)</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" disabled=${!!S.man} onClick=${addMan}><span className="ck"></span><span>Detección manual</span><kbd></kbd></button></div>`}
 
       ${ui.ctx && html`<div className="md ctxm" role="menu" style=${{ position: 'fixed', left: ui.ctx.x, top: ui.ctx.y }}>
@@ -355,7 +405,8 @@
         ${act.kind !== 'img' && act.kind !== 'det' && act.kind !== 'lim' && html`<button type="button" className="mi" role="menuitem" onClick=${() => removeLayer(act.id)}><span className="ck"></span><span>Eliminar capa</span><kbd></kbd></button>`}
         <button type="button" className="mi" role="menuitem" disabled=${M.buf.on} onClick=${addBuf}><span className="ck"></span><span>Nueva capa · Búfer</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" onClick=${addHist}><span className="ck"></span><span>Nueva capa · Histograma</span><kbd></kbd></button>
-        <button type="button" className="mi" role="menuitem" onClick=${addNdvi}><span className="ck"></span><span>Nueva capa · NDVI</span><kbd></kbd></button></div>`}
+        <button type="button" className="mi" role="menuitem" onClick=${addNdvi}><span className="ck"></span><span>Nueva capa · NDVI</span><kbd></kbd></button>
+        <button type="button" className="mi" role="menuitem" disabled=${!!S.amb} onClick=${addAmb}><span className="ck"></span><span>Nueva capa · Ambientación</span><kbd></kbd></button></div>`}
       ${ui.exportOpen && html`<${ExportDialog} S=${S} field=${field} ex=${ex} setEx=${setEx} yld=${ui.yld} onClose=${() => set({ exportOpen: false })} toast=${toast}/>`}
       ${ui.help && html`<div className="veil" onPointerDown=${e => { if (e.target === e.currentTarget) set({ help: false }); }}><div className="login" style=${{ width: 420 }} role="dialog" aria-label="Atajos"><h2>Atajos de teclado</h2>
         <div className="kv"><span>Mover</span><kbd>V</kbd></div><div className="kv"><span>Pincel / Borrador</span><kbd>B / E</kbd></div><div className="kv"><span>Selección smart (Mayús suma)</span><kbd>W</kbd></div>

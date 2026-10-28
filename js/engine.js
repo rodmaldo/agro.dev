@@ -29,7 +29,7 @@
     S.pix = c.getContext('2d').getImageData(0, 0, S.W, S.H).data;
     S.ndvi = opt.ndvi || null; S.detailed = !!opt.detailed;
     S.poly = poly || [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]];
-    S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.rot = 0; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.zord = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
+    S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.rot = 0; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.zord = null; S.amb = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
   };
 
   /* tamaño de celda en píxeles de análisis y cantidad de celdas (máx. 4 millones) */
@@ -60,7 +60,7 @@
     S.tiled = T; S.orth = null; S.pix = null; S.ndvi = null; S.detailed = !!opt.detailed; S.mpp = T.mppV;
     S.rot = 0; AZ.tiledFrame(S, 0);
     S.poly = poly || [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]];
-    S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.zord = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
+    S.tmp = []; S.pts = []; S.auto = null; S.badd = null; S.berase = null; S.hasDet = false; S.idxName = 'exg'; S.covPx = 0; S.man = null; S.zord = null; S.amb = null; S.hl = []; S.meta.man = null; S.meta.buf.on = false; S.meta.buf.m = 0;
   };
   /* tamaño del marco de análisis (el mosaico girado −rot°, igual que rotateCanvas) */
   AZ.tiledFrame = function (S, rot) {
@@ -218,17 +218,33 @@
 
   AZ._dtf = dtf;
 
-  /* píxel del análisis -> lat/lon (deshace la rotación de la grilla; supone mosaico norte-arriba centrado en S.geo) */
+  /* ---- plano tangente local ENU exacto (WGS84): mismo cálculo que el motor, para que lo medido en el mapa coincida con el terreno ---- */
+  const WA = 6378137, WE2 = (1 / 298.257223563) * (2 - 1 / 298.257223563), RAD = Math.PI / 180;
+  const ecef = (lat, lon) => { const p = lat * RAD, l = lon * RAD, sp = Math.sin(p), N = WA / Math.sqrt(1 - WE2 * sp * sp); return [N * Math.cos(p) * Math.cos(l), N * Math.cos(p) * Math.sin(l), N * (1 - WE2) * sp]; };
+  const basis = (lat0, lon0) => { const p = lat0 * RAD, l = lon0 * RAD; return { o: ecef(lat0, lon0), x: [-Math.sin(l), Math.cos(l), 0], y: [-Math.sin(p) * Math.cos(l), -Math.sin(p) * Math.sin(l), Math.cos(p)], z: [Math.cos(p) * Math.cos(l), Math.cos(p) * Math.sin(l), Math.sin(p)] }; };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  AZ.geoToEnu = function (lat0, lon0, lat, lon) { const B = basis(lat0, lon0), q = ecef(lat, lon), d = [q[0] - B.o[0], q[1] - B.o[1], q[2] - B.o[2]]; return [dot(d, B.x), dot(d, B.y)]; };
+  AZ.enuToGeo = function (lat0, lon0, e, n) {
+    const B = basis(lat0, lon0), u = -(e * e + n * n) / (2 * 6371000);
+    const x = B.o[0] + e * B.x[0] + n * B.y[0] + u * B.z[0], y = B.o[1] + e * B.x[1] + n * B.y[1] + u * B.z[1], z = B.o[2] + e * B.x[2] + n * B.y[2] + u * B.z[2];
+    const lon = Math.atan2(y, x), p = Math.hypot(x, y); let lat = Math.atan2(z, p * (1 - WE2));
+    for (let i = 0; i < 6; i++) { const sp = Math.sin(lat), N = WA / Math.sqrt(1 - WE2 * sp * sp); lat = Math.atan2(z + WE2 * N * sp, p); }
+    return { lat: lat / RAD, lon: lon / RAD };
+  };
+  /* píxel del análisis -> lat/lon (deshace la rotación de la grilla; mosaico norte-arriba centrado en S.geo).
+     Con S.geo.exact el mosaico está en el plano tangente (lat0,lon0) del motor y el centro del mosaico es (cE,cN) en ese plano. */
   AZ.pxToGeo = function (S, x, y) {
     const th = (S.rot || 0) * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th), dx = x - S.W / 2, dy = y - S.H / 2;
-    const xo = dx * c - dy * sn, yo = dx * sn + dy * c, { lat, lon } = S.geo;
-    const m = AZ.mPerDeg(lat);
-    return { lat: lat - (yo * S.mpp) / m.ky, lon: lon + (xo * S.mpp) / m.kx };
+    const xo = dx * c - dy * sn, yo = dx * sn + dy * c, g = S.geo;
+    if (g.exact) return AZ.enuToGeo(g.lat0, g.lon0, g.cE + xo * S.mpp, g.cN - yo * S.mpp);
+    const m = AZ.mPerDeg(g.lat);
+    return { lat: g.lat - (yo * S.mpp) / m.ky, lon: g.lon + (xo * S.mpp) / m.kx };
   };
   /* lat/lon -> píxel del análisis (inverso de pxToGeo) */
   AZ.geoToPx = function (S, lat, lon) {
-    const th = (S.rot || 0) * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th), m = AZ.mPerDeg(S.geo.lat);
-    const xo = (lon - S.geo.lon) * m.kx / S.mpp, yo = (S.geo.lat - lat) * m.ky / S.mpp;
+    const th = (S.rot || 0) * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th), g = S.geo; let xo, yo;
+    if (g.exact) { const q = AZ.geoToEnu(g.lat0, g.lon0, lat, lon); xo = (q[0] - g.cE) / S.mpp; yo = (g.cN - q[1]) / S.mpp; }
+    else { const m = AZ.mPerDeg(g.lat); xo = (lon - g.lon) * m.kx / S.mpp; yo = (g.lat - lat) * m.ky / S.mpp; }
     return [xo * c + yo * sn + S.W / 2, -xo * sn + yo * c + S.H / 2];
   };
   /* puntos del mosaico original -> imagen rotada (rot° en sentido antihorario para alinear la grilla) */

@@ -31,7 +31,8 @@
   };
 
   X.MACHINES = [
-    { id: 'jd-gen5', name: 'John Deere · Display GEN5 (Command Center / 4600)', note: 'Shapefile (.shp/.shx/.dbf/.prj). Importar con USB o desde Operations Center.' }
+    { id: 'jd-gen5', name: 'John Deere · Display GEN5 (4600) · pulverizadoras 4730 / 4040M', note: 'Shapefile en carpeta Rx del USB (.shp .shx .dbf .prj).' },
+    { id: 'jd-gen4', name: 'John Deere · Display GEN4 (4240 / 4640) · pulverizadoras 4730 / 4040M', note: 'Shapefile en carpeta Rx del USB (.shp .shx .dbf .prj).' }
   ];
   X.MODES = {
     apl: { name: 'Aplicación (pulverizadora)', unit: 'L/ha', prod: 'Producto', field: 'RATE' },
@@ -39,95 +40,125 @@
     sie: { name: 'Siembra', unit: 'semillas/ha', prod: 'Semilla', field: 'RATE' }
   };
 
-  /* clases del mapa de prescripción: FERTIL recibe la dosis; INFERTIL y BUFFER = 0 */
-  X.classMasks = function (S) {
-    const n = S.gw * S.gh, U = AZ.union(S), b = S.meta.buf, fer = new Uint8Array(n), inf = new Uint8Array(n), buf = new Uint8Array(n);
+  /* Dosis por celda. Infértil y búfer = 0. Con Ambientación activa, cada nivel lleva su dosis (L/ha); sin ella, el fértil recibe la dosis única.
+     cls: 0 = fuera del lote · 1 = INFERTIL · 2 = BUFFER · 3 = FERTIL (dosis única) · 4..8 = NIVEL 1..5 de la ambientación */
+  X.cellRates = function (S, o) {
+    const n = S.gw * S.gh, U = AZ.union(S), b = S.meta.buf, A = S.amb && S.amb.inc && S.amb.cls ? S.amb : null, dose = +o.dose || 0;
+    const rate = new Float32Array(n), cls = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       if (!S.inside[i]) continue;
-      if (U[i]) inf[i] = 1;
-      else if (b.on && b.inc && S.buf[i]) buf[i] = 1;
-      else fer[i] = 1;
+      if (U[i]) cls[i] = 1;
+      else if (b.on && b.inc && S.buf[i]) cls[i] = 2;
+      else if (A && A.cls[i] < 5) { cls[i] = 4 + A.cls[i]; rate[i] = Math.max(0, +A.rates[A.cls[i]] || 0); }
+      else { cls[i] = 3; rate[i] = dose; }
     }
-    return { fer, inf, buf };
+    return { rate, cls, amb: !!A };
   };
+  X.CLASS_NAME = ['', 'INFERTIL', 'BUFFER', 'FERTIL', 'NIVEL 1', 'NIVEL 2', 'NIVEL 3', 'NIVEL 4', 'NIVEL 5'];
 
-  /* rectángulos [i0,j0,i1,j1) (celdas): corridas por fila fusionadas verticalmente */
-  X.rects = function (m, gw, gh) {
-    const out = []; let open = new Map();
-    for (let j = 0; j <= gh; j++) {
-      const cur = new Map();
-      if (j < gh) for (let i = 0; i < gw;) {
-        if (!m[j * gw + i]) { i++; continue; }
-        let e = i; while (e < gw && m[j * gw + e]) e++;
-        const key = i + ':' + e, r = open.get(key);
-        if (r) { r[3] = j + 1; cur.set(key, r); open.delete(key); }
-        else { const nr = [i, j, e, j + 1]; out.push(nr); cur.set(key, nr); }
-        i = e;
+  /* Regiones: polígonos con huecos (un anillo exterior en sentido horario + huecos antihorarios) de las celdas marcadas en m.
+     Mucho menos polígonos que un rectángulo por corrida: el display JD carga más rápido y es más estable. Coordenadas en vértices de grilla (i, j). */
+  X.regions = function (m, gw, gh) {
+    const W1 = gw + 1, out = new Uint8Array(W1 * (gh + 1) * 4), has = (i, j) => i >= 0 && j >= 0 && i < gw && j < gh && m[j * gw + i] === 1;
+    for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+      if (!m[j * gw + i]) continue;
+      if (!has(i, j - 1)) out[(j * W1 + i) * 4] = 1;               // arriba, hacia el este
+      if (!has(i + 1, j)) out[(j * W1 + i + 1) * 4 + 1] = 1;       // derecha, hacia el sur
+      if (!has(i, j + 1)) out[((j + 1) * W1 + i + 1) * 4 + 2] = 1; // abajo, hacia el oeste
+      if (!has(i - 1, j)) out[((j + 1) * W1 + i) * 4 + 3] = 1;     // izquierda, hacia el norte
+    }
+    // componentes conexas (4 vecinos)
+    const lab = new Int32Array(gw * gh); let nl = 0; const st = [];
+    for (let k = 0; k < gw * gh; k++) {
+      if (!m[k] || lab[k]) continue; lab[k] = ++nl; st.push(k);
+      while (st.length) { const q = st.pop(), x = q % gw, y = (q / gw) | 0;
+        if (x > 0 && m[q - 1] && !lab[q - 1]) { lab[q - 1] = nl; st.push(q - 1); } if (x < gw - 1 && m[q + 1] && !lab[q + 1]) { lab[q + 1] = nl; st.push(q + 1); }
+        if (y > 0 && m[q - gw] && !lab[q - gw]) { lab[q - gw] = nl; st.push(q - gw); } if (y < gh - 1 && m[q + gw] && !lab[q + gw]) { lab[q + gw] = nl; st.push(q + gw); } }
+    }
+    const DX = [1, 0, -1, 0], DY = [0, 1, 0, -1], regs = new Map();
+    for (let v = 0; v < out.length; v += 4) for (let d0 = 0; d0 < 4; d0++) {
+      if (!out[v + d0]) continue;
+      const x0 = (v / 4) % W1, y0 = ((v / 4) / W1) | 0, ring = [];
+      let x = x0, y = y0, d = d0, first = true, area = 0;
+      for (;;) {
+        const vi = (y * W1 + x) * 4;
+        if (!first && x === x0 && y === y0 && d === d0) break;
+        out[vi + d] = 0; first = false;
+        const nx = x + DX[d], ny = y + DY[d], nv = (ny * W1 + nx) * 4;
+        let nd = -1; for (const t of [(d + 1) & 3, d, (d + 3) & 3]) if (out[nv + t] || (nx === x0 && ny === y0 && t === d0)) { nd = t; break; }
+        if (nd < 0) break;
+        if (nd !== d) ring.push([nx, ny]);
+        area += x * ny - nx * y; x = nx; y = ny; d = nd;
+        if (x === x0 && y === y0 && d === d0) break;
       }
-      open = cur;
+      if (ring.length < 3) continue;
+      // celda que queda a la derecha de la primera arista = componente del anillo
+      const cx = d0 === 0 ? x0 : d0 === 1 ? x0 - 1 : d0 === 2 ? x0 - 1 : x0, cy = d0 === 0 ? y0 : d0 === 1 ? y0 : d0 === 2 ? y0 - 1 : y0 - 1, L = lab[cy * gw + cx];
+      let r = regs.get(L); if (!r) { r = { rings: [], cells: 0 }; regs.set(L, r); }
+      area /= 2; r.rings.push({ pts: ring, a: area }); r.cells += area;
     }
-    return out;
+    return [...regs.values()].map(r => { r.rings.sort((p, q) => q.a - p.a); return { rings: r.rings.map(q => q.pts), cells: r.rings.reduce((t, q) => t + q.a, 0) }; });
   };
 
-  /* esquinas (sentido horario, Este-Norte) de un rectángulo de celdas */
-  X.corners = function (S, r) {
-    const cs = S.cs, p = (i, j) => { const g = AZ.pxToGeo(S, i * cs, j * cs); return [g.lon, g.lat]; };
-    const a = p(r[0], r[1]), b = p(r[2], r[1]), c = p(r[2], r[3]), d = p(r[0], r[3]);
-    return [a, b, c, d, a];
+  /* vértices de grilla -> [lon, lat] (con la rotación y georreferencia del mosaico) */
+  X.geoRing = function (S, ring) {
+    const cs = S.cs, o = ring.map(p => { const g = AZ.pxToGeo(S, p[0] * cs, p[1] * cs); return [g.lon, g.lat]; });
+    o.push(o[0]); return o;
   };
 
+  /* lista de polígonos a exportar: {clase, nivel, rate, ha, rings:[[lon,lat]…]} */
   X.prescription = function (S, o) {
-    const cm = X.classMasks(S), ch = AZ.cellHa(S), dose = +o.dose || 0, items = [];
-    const add = (mask, clase, rate) => X.rects(mask, S.gw, S.gh).forEach(r => items.push({ ring: X.corners(S, r), clase, rate, ha: (r[2] - r[0]) * (r[3] - r[1]) * ch }));
-    add(cm.fer, 'FERTIL', dose);
-    add(cm.inf, 'INFERTIL', 0);
-    if (S.meta.buf.on && S.meta.buf.inc) add(cm.buf, 'BUFFER', 0);
+    const R = X.cellRates(S, o), n = S.gw * S.gh, ch = AZ.cellHa(S), items = [], A = R.amb ? S.amb : null;
+    const groups = new Map();
+    for (let i = 0; i < n; i++) { const c = R.cls[i]; if (!c) continue; let g = groups.get(c); if (!g) { g = new Uint8Array(n); groups.set(c, g); } g[i] = 1; }
+    for (const [c, m] of groups) {
+      const rate = c >= 4 ? Math.max(0, +A.rates[c - 4] || 0) : c === 3 ? (+o.dose || 0) : 0;
+      if (o.omitZero && rate === 0) continue;
+      for (const r of X.regions(m, S.gw, S.gh)) items.push({ clase: X.CLASS_NAME[c], nivel: c >= 4 ? c - 3 : 0, rate, ha: r.cells * ch, rings: r.rings.map(q => X.geoRing(S, q)) });
+    }
     return items;
   };
 
   /* ---------- Shapefile ---------- */
   const enc = s => new TextEncoder().encode(s);
+  /* Shapefile de polígonos (tipo 5): cada registro tiene uno o más anillos (exterior horario, huecos antihorarios) */
   function shapefile(items) {
-    const nrec = items.length, recLen = 8 + 128, shpLen = 100 + nrec * recLen, shxLen = 100 + nrec * 8;
+    const recs = items.map(it => ({ parts: it.rings, np: it.rings.reduce((a, r) => a + r.length, 0) }));
+    const lens = recs.map(r => 8 + 44 + 4 * r.parts.length + 16 * r.np), shpLen = 100 + lens.reduce((a, b) => a + b, 0), shxLen = 100 + recs.length * 8;
     const shp = new DataView(new ArrayBuffer(shpLen)), shx = new DataView(new ArrayBuffer(shxLen));
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    items.forEach(it => it.ring.forEach(([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }));
-    if (!nrec) { x0 = y0 = x1 = y1 = 0; }
-    const head = (v, len) => {
-      v.setInt32(0, 9994); v.setInt32(24, len / 2); v.setInt32(28, 1000, true); v.setInt32(32, 5, true);
-      [x0, y0, x1, y1].forEach((q, k) => v.setFloat64(36 + k * 8, q, true));
-    };
+    items.forEach(it => it.rings.forEach(r => r.forEach(([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); })));
+    if (!recs.length) { x0 = y0 = x1 = y1 = 0; }
+    const head = (v, len) => { v.setInt32(0, 9994); v.setInt32(24, len / 2); v.setInt32(28, 1000, true); v.setInt32(32, 5, true); [x0, y0, x1, y1].forEach((q, k) => v.setFloat64(36 + k * 8, q, true)); };
     head(shp, shpLen); head(shx, shxLen);
-    items.forEach((it, k) => {
-      const o = 100 + k * recLen, xs = it.ring.map(p => p[0]), ys = it.ring.map(p => p[1]);
-      shp.setInt32(o, k + 1); shp.setInt32(o + 4, 64);
-      shp.setInt32(o + 8, 5, true);
-      [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].forEach((q, m) => shp.setFloat64(o + 12 + m * 8, q, true));
-      shp.setInt32(o + 44, 1, true); shp.setInt32(o + 48, 5, true); shp.setInt32(o + 52, 0, true);
-      it.ring.forEach((p, m) => { shp.setFloat64(o + 56 + m * 16, p[0], true); shp.setFloat64(o + 64 + m * 16, p[1], true); });
-      shx.setInt32(100 + k * 8, o / 2); shx.setInt32(104 + k * 8, 64);
+    let o = 100;
+    recs.forEach((r, k) => {
+      const all = r.parts.flat(), xs = all.map(p => p[0]), ys = all.map(p => p[1]), cl = lens[k] - 8;
+      shp.setInt32(o, k + 1); shp.setInt32(o + 4, cl / 2); shp.setInt32(o + 8, 5, true);
+      let mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity; for (let q = 0; q < xs.length; q++) { mnx = Math.min(mnx, xs[q]); mxx = Math.max(mxx, xs[q]); mny = Math.min(mny, ys[q]); mxy = Math.max(mxy, ys[q]); }
+      [mnx, mny, mxx, mxy].forEach((q, m) => shp.setFloat64(o + 12 + m * 8, q, true));
+      shp.setInt32(o + 44, r.parts.length, true); shp.setInt32(o + 48, r.np, true);
+      let idx = 0; r.parts.forEach((p, m) => { shp.setInt32(o + 52 + 4 * m, idx, true); idx += p.length; });
+      let po = o + 52 + 4 * r.parts.length; all.forEach(p => { shp.setFloat64(po, p[0], true); shp.setFloat64(po + 8, p[1], true); po += 16; });
+      shx.setInt32(100 + k * 8, o / 2); shx.setInt32(104 + k * 8, cl / 2); o += lens[k];
     });
     return { shp: new Uint8Array(shp.buffer), shx: new Uint8Array(shx.buffer) };
   }
   X._shapefile = shapefile;
 
-  /* dBASE III: ID(N10) CLASE(C12) RATE(N12.3) AREA_HA(N12.4) */
+  /* dBASE III: ID(N10) CLASE(C12) NIVEL(N3) RATE(N12.3) AREA_HA(N12.4). El display JD pide elegir la columna de dosis: es RATE. */
   function dbf(items) {
-    const F = [['ID', 'N', 10, 0], ['CLASE', 'C', 12, 0], ['RATE', 'N', 12, 3], ['AREA_HA', 'N', 12, 4]];
+    const F = [['ID', 'N', 10, 0], ['CLASE', 'C', 12, 0], ['NIVEL', 'N', 3, 0], ['RATE', 'N', 12, 3], ['AREA_HA', 'N', 12, 4]];
     const rl = 1 + F.reduce((a, f) => a + f[2], 0), hl = 32 + F.length * 32 + 1, buf = new Uint8Array(hl + items.length * rl + 1), v = new DataView(buf.buffer);
     const d = new Date(); buf[0] = 3; buf[1] = d.getFullYear() - 1900; buf[2] = d.getMonth() + 1; buf[3] = d.getDate();
     v.setUint32(4, items.length, true); v.setUint16(8, hl, true); v.setUint16(10, rl, true);
-    F.forEach((f, k) => {
-      const o = 32 + k * 32; buf.set(enc(f[0]), o); buf[o + 11] = f[1].charCodeAt(0); buf[o + 16] = f[2]; buf[o + 17] = f[3];
-    });
+    F.forEach((f, k) => { const o = 32 + k * 32; buf.set(enc(f[0]), o); buf[o + 11] = f[1].charCodeAt(0); buf[o + 16] = f[2]; buf[o + 17] = f[3]; });
     buf[32 + F.length * 32] = 13;
     const put = (o, s, w, right) => { s = String(s).slice(0, w); const pad = ' '.repeat(w - s.length); buf.set(enc(right ? pad + s : s + pad), o); };
     items.forEach((it, k) => {
       let o = hl + k * rl; buf[o++] = 32;
-      put(o, k + 1, 10, true); o += 10;
-      put(o, it.clase, 12, false); o += 12;
-      put(o, it.rate.toFixed(3), 12, true); o += 12;
-      put(o, it.ha.toFixed(4), 12, true);
+      put(o, k + 1, 10, true); o += 10; put(o, it.clase, 12, false); o += 12; put(o, it.nivel || 0, 3, true); o += 3;
+      put(o, it.rate.toFixed(3), 12, true); o += 12; put(o, it.ha.toFixed(4), 12, true);
     });
     buf[buf.length - 1] = 26;
     return buf;
@@ -164,30 +195,46 @@
 
   /* ---------- consumos y ahorro ---------- */
   X.consumption = function (S, o) {
-    const st = AZ.stats(S), dose = +o.dose || 0, price = +o.price || 0, base = st.lote * dose, used = st.treat * dose, save = base - used;
+    const st = AZ.stats(S), dose = +o.dose || 0, price = +o.price || 0, R = X.cellRates(S, o), ch = AZ.cellHa(S);
+    let used = 0, treat = 0; for (let i = 0; i < R.rate.length; i++) if (R.cls[i] && R.rate[i] > 0) { used += R.rate[i] * ch; treat += ch; }
+    const base = st.lote * dose, save = base - used;
     return {
-      st, dose, unit: o.unit || (X.MODES[o.mode] || X.MODES.apl).unit, loteHa: st.lote, treatHa: st.treat, skipHa: st.lote - st.treat,
+      st, dose, unit: o.unit || (X.MODES[o.mode] || X.MODES.apl).unit, loteHa: st.lote, treatHa: treat, skipHa: st.lote - treat, amb: R.amb,
       base, used, save, savePct: base ? save / base * 100 : 0, avg: st.lote ? used / st.lote : 0, price, money: save * price
     };
   };
 
   /* ---------- paquete de prescripción ---------- */
   X.prescriptionZip = function (S, o) {
-    const items = X.prescription(S, o), sh = shapefile(items), nm = slug(o.field) + '_Rx', c = X.consumption(S, o), mode = X.MODES[o.mode] || X.MODES.apl;
+    const items = X.prescription(S, o), sh = shapefile(items), nm = slug(o.field) + '_Rx', c = X.consumption(S, o), mode = X.MODES[o.mode] || X.MODES.apl, A = c.amb ? S.amb : null;
+    const rows = [];
+    if (A) A.rates.forEach((r, k) => rows.push('  Nivel ' + (k + 1) + ' (' + A.colors[k] + '): ' + (+r || 0).toFixed(1) + ' ' + c.unit));
     const txt = [
-      'agro.dev · Mapa de prescripción', 'Lote: ' + (o.field || '-'), 'Máquina: ' + (o.machine || X.MACHINES[0].name), 'Tipo: ' + mode.name + ' · dosis ' + c.dose + ' ' + c.unit,
-      'Capas: FERTIL = dosis · INFERTIL = 0 · BUFFER = 0', 'Sistema de coordenadas: WGS84 (EPSG:4326)', '',
-      'Importación en John Deere: copiar los archivos a una memoria USB (carpeta Rx de la unidad) o cargar el .zip en Operations Center > Archivos,',
-      'luego en el display GEN5 elegir el producto y asignar el atributo RATE como dosis objetivo.',
-      'IMPORTANTE: validar el mapa en el display con una prueba de campo antes de la aplicación.'
+      'agro.dev · Mapa de prescripción para John Deere', '',
+      'Lote: ' + (o.field || '-'), 'Equipo: ' + (o.machine || X.MACHINES[0].name), 'Operación: ' + mode.name, 'Unidad de la dosis (columna RATE): ' + c.unit,
+      A ? 'Dosis por nivel de Ambientación (' + A.name + '):' : 'Dosis única en zona fértil: ' + c.dose + ' ' + c.unit, ...rows,
+      'Infértil (' + S.meta.det.name + ')' + (S.meta.buf.on && S.meta.buf.inc ? ' y búfer' : '') + ': 0 ' + c.unit + (o.omitZero ? ' (sin polígono: no se aplica)' : ''),
+      'Superficie a tratar: ' + c.treatHa.toFixed(1) + ' ha de ' + c.loteHa.toFixed(1) + ' ha · volumen ' + c.used.toFixed(0) + ' ' + c.unit.split('/')[0] + ' · ahorro ' + c.save.toFixed(0) + ' ' + c.unit.split('/')[0] + ' (' + c.savePct.toFixed(1) + ' %)',
+      'Polígonos: ' + items.length, 'Sistema de coordenadas: WGS84 sin proyectar (EPSG:4326), como piden los displays GreenStar / Gen4 / Gen5.', '',
+      'CÓMO CARGARLO (Gen4 y Gen5)',
+      '1. Descomprimí este .zip en la RAÍZ de un pendrive (formato FAT32): tiene que quedar la carpeta "Rx" con ' + nm + '.shp / .shx / .dbf / .prj adentro.',
+      '   La carpeta se llama exactamente Rx, sin otra carpeta alrededor.',
+      '2. Insertá el pendrive en el display. Si aparece el aviso, tocá "Importar datos"; si no: Menú > Sistema (Administrador de archivos / Data Manager) > Importar desde USB.',
+      '3. Elegí los archivos y en "Tipo de datos" seleccioná "Prescripción Rx". Importar.',
+      '4. En Configuración de trabajo / Aplicaciones: confirmá Cliente, Establecimiento, Lote y Equipo. En el producto (líquido) tocá "Dosis objetivo / Rx" y elegí ' + nm + '.',
+      '5. En "Columna de dosis" elegí RATE y en "Unidades de la columna" ' + c.unit + '. Completá "Dosis sin GPS" y la dosis fuera del mapa (se sugiere ' + (A ? 'la del nivel fértil de mayor superficie' : c.dose + ' ' + c.unit) + ') y el "Look-ahead" según tu pulverizador.',
+      '6. En la pantalla de aplicación, cambiá el control de dosis de "Predefinida" a "Basada en mapa".',
+      'Alternativa: subí el .shp (con sus .shx .dbf .prj) a John Deere Operations Center > Archivos y enviá la prescripción a la máquina por Wireless Data Transfer.', '',
+      'IMPORTANTE: validá el mapa con una prueba de campo antes de aplicar (comprobá que la dosis del display cambia al cruzar cada zona y que las zonas con dosis 0 cortan las secciones).',
+      'Respetá el rango de dosis de tus picos y la velocidad de trabajo: el controlador no puede entregar dosis fuera de ese rango.'
     ].join('\r\n');
-    const bytes = X.zip([{ name: nm + '.shp', data: sh.shp }, { name: nm + '.shx', data: sh.shx }, { name: nm + '.dbf', data: dbf(items) }, { name: nm + '.prj', data: X.PRJ }, { name: 'LEEME.txt', data: txt }]);
+    const bytes = X.zip([{ name: 'Rx/' + nm + '.shp', data: sh.shp }, { name: 'Rx/' + nm + '.shx', data: sh.shx }, { name: 'Rx/' + nm + '.dbf', data: dbf(items) }, { name: 'Rx/' + nm + '.prj', data: X.PRJ }, { name: 'LEEME_John_Deere.txt', data: txt }]);
     return { bytes, name: nm + '.zip', n: items.length };
   };
 
   X.geojson = function (S, o) {
     const items = X.prescription(S, o);
-    return { type: 'FeatureCollection', features: items.map((it, k) => ({ type: 'Feature', properties: { ID: k + 1, CLASE: it.clase, RATE: it.rate, AREA_HA: +it.ha.toFixed(4) }, geometry: { type: 'Polygon', coordinates: [it.ring] } })) };
+    return { type: 'FeatureCollection', features: items.map((it, k) => ({ type: 'Feature', properties: { ID: k + 1, CLASE: it.clase, NIVEL: it.nivel, RATE: it.rate, AREA_HA: +it.ha.toFixed(4) }, geometry: { type: 'Polygon', coordinates: it.rings } })) };
   };
 
   /* ---------- informe (HTML imprimible → "Guardar como PDF") ---------- */

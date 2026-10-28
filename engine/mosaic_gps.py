@@ -65,18 +65,47 @@ def parse_photo(path):
 
 # ----------------------------------------------------------------------------------------------- geometría
 
+_WA, _WF = 6378137.0, 1 / 298.257223563
+_WE2 = _WF * (2 - _WF)
+
+
+def _ecef(lat, lon):
+    p, l = math.radians(lat), math.radians(lon); sp = math.sin(p); N = _WA / math.sqrt(1 - _WE2 * sp * sp)
+    return N * math.cos(p) * math.cos(l), N * math.cos(p) * math.sin(l), N * (1 - _WE2) * sp
+
+
+def _geodetic(x, y, z):
+    lon = math.atan2(y, x); p = math.hypot(x, y); lat = math.atan2(z, p * (1 - _WE2))
+    for _ in range(6):
+        sp = math.sin(lat); N = _WA / math.sqrt(1 - _WE2 * sp * sp); lat = math.atan2(z + _WE2 * N * sp, p)
+    return math.degrees(lat), math.degrees(lon)
+
+
 class Frame:
-    """Plano local ENU alrededor de (lat0, lon0)."""
+    """Plano tangente local ENU (metros reales, WGS84 exacto) alrededor de (lat0, lon0). Reemplaza la aproximación de grados-metro
+    constantes: con ella el error llegaba a ~15 cm a 1 km del centro (la longitud de un grado cambia con la latitud y los meridianos convergen)."""
     def __init__(self, photos):
         self.lat0 = sum(p['lat'] for p in photos) / len(photos)
         self.lon0 = sum(p['lon'] for p in photos) / len(photos)
         self.kx, self.ky = m_per_deg(self.lat0)
+        p0, l0 = math.radians(self.lat0), math.radians(self.lon0)
+        self.o = _ecef(self.lat0, self.lon0)
+        self.ux = (-math.sin(l0), math.cos(l0), 0.0)
+        self.uy = (-math.sin(p0) * math.cos(l0), -math.sin(p0) * math.sin(l0), math.cos(p0))
+        self.uz = (math.cos(p0) * math.cos(l0), math.cos(p0) * math.sin(l0), math.sin(p0))
         for p in photos:
-            p['e'] = (p['lon'] - self.lon0) * self.kx
-            p['n'] = (p['lat'] - self.lat0) * self.ky
+            p['e'], p['n'] = self.to_enu(p['lat'], p['lon'])
+
+    def to_enu(self, lat, lon):
+        x, y, z = _ecef(lat, lon); d = (x - self.o[0], y - self.o[1], z - self.o[2])
+        return (d[0] * self.ux[0] + d[1] * self.ux[1] + d[2] * self.ux[2], d[0] * self.uy[0] + d[1] * self.uy[1] + d[2] * self.uy[2])
 
     def to_latlon(self, e, n):
-        return self.lat0 + n / self.ky, self.lon0 + e / self.kx
+        u = -(e * e + n * n) / (2 * 6371000.0)          # el plano tangente queda "arriba" del elipsoide: se baja a la superficie
+        x = self.o[0] + e * self.ux[0] + n * self.uy[0] + u * self.uz[0]
+        y = self.o[1] + e * self.ux[1] + n * self.uy[1] + u * self.uz[1]
+        z = self.o[2] + e * self.ux[2] + n * self.uy[2] + u * self.uz[2]
+        return _geodetic(x, y, z)
 
 
 def photo_matrix(p, E0, N1, g):
@@ -256,9 +285,15 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None, log=None):
     for i in range(n):
         d = np.hypot(pos[:, 0] - pos[i, 0], pos[:, 1] - pos[i, 1])
         lim = 0.8 * min(photos[i]['w'], photos[i]['h']) * photos[i]['g']
-        for j in np.argsort(d)[1:15]:                     # 14 vecinos más cercanos (incluye las pasadas de al lado y de otros vuelos)
-            if 1.0 < d[j] < lim:
-                pairs.add((min(i, int(j)), max(i, int(j))))
+        # Vecinos repartidos por dirección (8 sectores, los 3 más cercanos de cada uno). Con "los N más cercanos" casi todos caen en la MISMA
+        # pasada y entre pasadas quedan pocos enlaces: cada franja flota con su propio brillo y aparecen escalones diagonales. Así hay enlaces
+        # a las pasadas de ambos lados (y de otros vuelos) y el sistema se cierra en lazos que frenan la deriva de exposición.
+        cand = [int(j) for j in np.argsort(d)[1:] if 1.0 < d[j] < lim][:200]
+        cnt = {}
+        for j in cand:
+            sec = int(((math.atan2(pos[j, 0] - pos[i, 0], pos[j, 1] - pos[i, 1]) + math.pi) / (2 * math.pi) * 8)) % 8
+            if cnt.get(sec, 0) < 3:
+                cnt[sec] = cnt.get(sec, 0) + 1; pairs.add((min(i, j), max(i, j)))
     for k_, (i, j) in enumerate(sorted(pairs)):
         if tick and k_ % 100 == 0: tick('pares', k_, len(pairs))
         if True:
@@ -1070,7 +1105,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     tm['vistas'] = round(time.time() - ts, 1); L('mosaico: vistas reducidas listas en %.1f s' % tm['vistas'])
     hl = hull(corners)
     poly = [[(c[0] - E0) / g, (N1 - c[1]) / g] for c in hull([c for q in P for c in footprint(q, 0.96)])]
-    meta = {'w': W, 'h': H, 'tile': T, 'levels': levels, 'mpp': g, 'E0': E0, 'N1': N1, 'lat0': fr.lat0, 'lon0': fr.lon0, 'kx': fr.kx, 'ky': fr.ky,
+    meta = {'w': W, 'h': H, 'tile': T, 'levels': levels, 'mpp': g, 'E0': E0, 'N1': N1, 'lat0': fr.lat0, 'lon0': fr.lon0, 'exact': True, 'kx': fr.kx, 'ky': fr.ky,
             'photos': len(P), 'tiles': ntiles, 'poly_px': poly, 'cover_ha': 0, 'seconds': round(time.time() - t0, 1),
             'rtk': sum(1 for q in P if q.get('rtk') == 50), 'alt': float(np.median([q['alt'] or 0 for q in P])), 'quality': quality,
             'vignette': [float(prof[0, 1]), float(prof[-1, 1])], 'gain_range': [float(gains.min()), float(gains.max())],

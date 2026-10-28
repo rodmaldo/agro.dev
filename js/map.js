@@ -16,6 +16,10 @@
     const [r, g, b] = rgb(col), a = Math.round(al * 255);
     for (let i = 0; i < m.length; i++) if (m[i]) { const k = i * 4; d[k] = r; d[k + 1] = g; d[k + 2] = b; d[k + 3] = a; }
   });
+  const ambImg = S => { const A = S.amb; return mk(S, 'amb', A.colors.join() + A.th.join() + A.idx, d => {
+    const cols = A.colors.map(rgb), c = A.cls; if (!c) return;
+    for (let i = 0; i < c.length; i++) if (c[i] < 5) { const k = i * 4, q = cols[c[i]]; d[k] = q[0]; d[k + 1] = q[1]; d[k + 2] = q[2]; d[k + 3] = 175; }
+  }); };
   const STOPS = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]];
   function cmap(t) { t = Math.max(0, Math.min(0.999, t)) * 4; const i = t | 0, f = t - i; return STOPS[i].map((v, q) => v + (STOPS[i + 1][q] - v) * f); }
   const heat = (S, key) => mk(S, 'heat', key, d => {
@@ -91,6 +95,7 @@
       for (const id of AZ.layerIds(S).slice().reverse()) {      // de abajo hacia arriba
         if (id === 'buf') { if (M.buf.vis && M.buf.on && S.buf.length === gw * gh) g.drawImage(mask(S, 'buf', S.buf, M.buf.color, 0.6), 0, 0, GW, GH); }
         else if (id === 'det') { if (M.det.vis && S.det.length === gw * gh) g.drawImage(mask(S, 'det', S.det, M.det.color, 0.65), 0, 0, GW, GH); }
+        else if (id === 'amb') { if (S.amb && S.amb.vis && S.amb.cls) g.drawImage(ambImg(S), 0, 0, GW, GH); }
         else if (id === 'man') { if (S.man && M.man.vis) g.drawImage(mask(S, 'man', S.man, M.man.color, 0.65), 0, 0, GW, GH); }
         else { const l = S.hl.find(q => q.id === id); if (l && l.vis) g.drawImage(mask(S, 'h' + l.id, l.mask, l.color, 0.65), 0, 0, GW, GH); }
       }
