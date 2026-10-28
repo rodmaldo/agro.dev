@@ -7,7 +7,7 @@
   const Head = ({ user, onLogout, back, title }) => html`<header className="top">
     ${back && html`<button className="lnk" type="button" onClick=${back} aria-label="Volver"><${Ic} n="back" s=${16}/></button>`}
     <div className="brand">agro<i>.dev</i></div>${title && html`<span className="crumb">${title}</span>`}
-    <span className="grow"></span><span className="usr">${user}</span>${onLogout && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}</header>`;
+    <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span>${onLogout && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}</header>`;
 
   /* ---------- 1 · INICIO ---------- */
   root.AZUI.Home = function Home({ user, onOpen, onLogout }) {

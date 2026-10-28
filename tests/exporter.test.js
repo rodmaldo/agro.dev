@@ -14,3 +14,12 @@ assert(Math.abs(sum('FERTIL')-c.treatHa)<1e-6);assert(Math.abs(sum('INFERTIL')-s
 fs.writeFileSync('out_rx.zip',pz.bytes);
 fs.writeFileSync('out_rep.html',AZ.X.reportHtml(S,o));
 console.log('geojson',AZ.X.geojson(S,o).features.length);
+
+// límites KML / GeoJSON
+const kml='<kml><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>-61.20,-33.10,0 -61.19,-33.10,0 -61.19,-33.11,0 -61.20,-33.11,0 -61.20,-33.10,0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></kml>';
+const rk=AZ.X.parseBoundary(kml);assert.strictEqual(rk.length,1);assert.strictEqual(rk[0].length,4);
+const rg=AZ.X.parseBoundary(JSON.stringify({type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Polygon',coordinates:[[[-61.2,-33.1],[-61.19,-33.1],[-61.19,-33.11],[-61.2,-33.1]]]}}]}));assert.strictEqual(rg.length,1);assert.strictEqual(rg[0].length,3);
+assert.strictEqual(AZ.X.parseBoundary('basura').length,0);
+// ida y vuelta geo <-> píxel
+{const q=AZ.pxToGeo(S,500,400),b=AZ.geoToPx(S,q.lat,q.lon);assert(Math.hypot(b[0]-500,b[1]-400)<1e-6);}
+console.log('límites OK');

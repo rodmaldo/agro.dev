@@ -225,6 +225,12 @@
     const m = AZ.mPerDeg(lat);
     return { lat: lat - (yo * S.mpp) / m.ky, lon: lon + (xo * S.mpp) / m.kx };
   };
+  /* lat/lon -> píxel del análisis (inverso de pxToGeo) */
+  AZ.geoToPx = function (S, lat, lon) {
+    const th = (S.rot || 0) * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th), m = AZ.mPerDeg(S.geo.lat);
+    const xo = (lon - S.geo.lon) * m.kx / S.mpp, yo = (S.geo.lat - lat) * m.ky / S.mpp;
+    return [xo * c + yo * sn + S.W / 2, -xo * sn + yo * c + S.H / 2];
+  };
   /* puntos del mosaico original -> imagen rotada (rot° en sentido antihorario para alinear la grilla) */
   AZ.rotPts = function (pts, deg, w0, h0, w1, h1) {
     const th = deg * Math.PI / 180, c = Math.cos(th), sn = Math.sin(th);

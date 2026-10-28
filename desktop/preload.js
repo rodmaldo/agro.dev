@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('agroDesktop', {
     return { id, done };
   },
   cancel: id => ipcRenderer.invoke('engine:cancel', id),
+  savePdf: (html, name) => ipcRenderer.invoke('report:pdf', html, name),
   reveal: p => ipcRenderer.invoke('shell:reveal', p),
   workdir: () => ipcRenderer.invoke('app:workdir'),
   onLog: cb => { logCbs.add(cb); return () => logCbs.delete(cb); },

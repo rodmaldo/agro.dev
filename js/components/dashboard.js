@@ -71,7 +71,13 @@
       AZMap.paint(cv, S, { x: 0, y: 0, z }, po, false, () => { });
       if (S.tiled) for (let i = 0; i < 40 && AZMap.pending() > 0; i++) { await new Promise(r => setTimeout(r, 150)); AZMap.paint(cv, S, { x: 0, y: 0, z }, po, false, () => { }); }   // esperar los mosaicos del ortomosaico
       if (S.tiled) { await new Promise(r => setTimeout(r, 200)); AZMap.paint(cv, S, { x: 0, y: 0, z }, po, false, () => { }); }
-      const h = AZ.X.reportHtml(S, { ...o, img: cv.toDataURL('image/jpeg', 0.85) }).replace('</body>', '<script>setTimeout(function(){print()},500)<\/script></body>');
+      const base = AZ.X.reportHtml(S, { ...o, img: cv.toDataURL('image/jpeg', 0.85) }), nm = 'informe_' + field.name.replace(/\W+/g, '_');
+      if (window.agroDesktop && window.agroDesktop.savePdf) {   // escritorio: PDF real
+        try { const r = await window.agroDesktop.savePdf(base, nm + '.pdf'); toast(r && r.canceled ? 'Informe cancelado' : 'Informe PDF guardado'); }
+        catch (e) { toast('No se pudo crear el PDF: ' + e.message); }
+        return;
+      }
+      const h = base.replace('</body>', '<script>setTimeout(function(){print()},500)<\/script></body>');
       const url = URL.createObjectURL(new Blob([h], { type: 'text/html' })), win = window.open(url, '_blank');
       if (!win) { AZFiles.download('informe_' + field.name.replace(/\W+/g, '_') + '.html', h, 'text/html'); toast('El navegador bloqueó la ventana: se descargó el informe (abrilo e imprimí → Guardar como PDF)'); }
     });
@@ -204,7 +210,7 @@
         <${Menu} id="view" label="Vista" open=${ui.menu} setOpen=${setMenu} items=${items.view}/>
         <${Menu} id="help" label="Ayuda" open=${ui.menu} setOpen=${setMenu} items=${items.help}/>
         <span className="grow"></span><button className="btn pri sm" type="button" onClick=${() => set({ exportOpen: true })}><${Ic} n="download" s=${13}/> Exportar</button>
-        <span className="usr">${user}</span><button className="lnk" type="button" onClick=${onLogout}>Salir</button>
+        <${root.AZUI.GearBtn}/><span className="usr">${user}</span><button className="lnk" type="button" onClick=${onLogout}>Salir</button>
       </header>
 
       <div className=${'main' + (ui.dockL ? '' : ' nl') + (ui.dockR ? '' : ' nr')}>

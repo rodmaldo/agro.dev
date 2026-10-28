@@ -11,7 +11,7 @@ No corrige relieve ni distorsión de lente (para eso está el modo ODM). Con ter
 """
 import json, math, os, re, shutil, sys, time
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 Image.MAX_IMAGE_PIXELS = None
 T = 512
@@ -198,6 +198,46 @@ def detrend_gains(lg, pos, comps, log=None):
     return out
 
 
+FIELD_SC = 50.0      # m: escala de las coordenadas del campo de brillo
+
+
+def field_feats(dE, dN):
+    """Características (…,5) del desplazamiento (m, este/norte) del punto respecto del centro de la foto: x, y, x², xy, y²."""
+    x, y = np.asarray(dE, np.float32) / FIELD_SC, np.asarray(dN, np.float32) / FIELD_SC
+    return np.stack([x, y, x * x, x * y, y * y], -1)
+
+
+def field_gain(theta, dE, dN):
+    """Factor multiplicativo (…,3) del brillo según el ángulo de visión (desplazamiento respecto del centro de la foto)."""
+    f = field_feats(dE, dN)
+    return np.exp(np.clip(np.tensordot(f, theta, axes=([-1], [0])), -0.5, 0.5)).astype(np.float32)
+
+
+def _cg_joint(ri, rj, w2, y, dphi, n, prior=1e-3, anchor=0.02 ** 2, tol=1e-9, max_it=20000):
+    """Ganancia por foto (n) y coeficientes del campo de brillo (5) a la vez, por gradiente conjugado con bincount (sin LAPACK).
+    Ecuación de cada par:  lG_i - lG_j + theta·(phi_i - phi_j) = y. El prior chico sobre lG manda cualquier tendencia suave al campo de brillo."""
+    k = dphi.shape[1]
+    X = np.zeros((n + k, y.shape[1]))
+    dg = np.concatenate([np.bincount(ri, w2, n) + np.bincount(rj, w2, n) + anchor + prior + 1e-12, (dphi * dphi * w2[:, None]).sum(0) + 1e-9])
+    def mv(v):
+        u, t = v[:n], v[n:]
+        rp = w2 * (u[ri] - u[rj] + dphi @ t)
+        out_u = np.bincount(ri, rp, n) - np.bincount(rj, rp, n) + (anchor + prior) * u + anchor * (u.sum() - u)
+        return np.concatenate([out_u, dphi.T @ rp + 1e-9 * t])
+    for c in range(y.shape[1]):
+        wy = w2 * y[:, c]
+        b = np.concatenate([np.bincount(ri, wy, n) - np.bincount(rj, wy, n), dphi.T @ wy])
+        x = np.zeros(n + k); r = b.copy(); z = r / dg; pv = z.copy(); rz = float(r @ z); nb = math.sqrt(float(b @ b)) + 1e-30
+        for _ in range(max_it):
+            if math.sqrt(float(r @ r)) / nb < tol:
+                break
+            Ap = mv(pv); al = rz / max(float(pv @ Ap), 1e-300)
+            x += al * pv; r -= al * Ap; z = r / dg
+            rz2 = float(r @ z); pv = z + (rz2 / max(rz, 1e-300)) * pv; rz = rz2
+        X[:, c] = x
+    return X[:n], X[n:]
+
+
 def solve_gains(photos, frame, prof, rbins, g_out, tick=None, log=None):
     """Ganancias por foto y canal para que las superposiciones coincidan (mínimos cuadrados sobre log-ratios).
     tick(etapa, i, n) avisa el avance (para la barra de progreso y para saber que el motor sigue vivo)."""
@@ -211,7 +251,7 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None, log=None):
         r = np.hypot((xx + .5 - ww / 2) / (ww / 2), (yy + .5 - hh / 2) / (hh / 2)) / math.sqrt(2)
         th.append((a * vignette_gain(r, prof, rbins), ww, hh))
     pos = np.array([[p['e'], p['n']] for p in photos])
-    rows_i, rows_j, vals, wts = [], [], [[], [], []], []
+    rows_i, rows_j, vals, wts, dphis = [], [], [[], [], []], [], []
     pairs = set()
     for i in range(n):
         d = np.hypot(pos[:, 0] - pos[i, 0], pos[:, 1] - pos[i, 1])
@@ -246,10 +286,13 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None, log=None):
             if good.sum() < 150:
                 continue
             mi = vi_[good].mean(0); mj = vj_[good].mean(0)
+            oiE = (right * math.cos(ps_i) + up * math.sin(ps_i))[ok][good]; oiN = (-right * math.sin(ps_i) + up * math.cos(ps_i))[ok][good]
+            dphis.append(field_feats(oiE, oiN).mean(0) - field_feats(oiE + P['e'] - Q['e'], oiN + P['n'] - Q['n']).mean(0))
             if (mi < 8).any() or (mj < 8).any():
                 continue
             rows_i.append(i); rows_j.append(j); wts.append(math.sqrt(good.sum()))
             for c in range(3): vals[c].append(math.log(mj[c] / mi[c]))        # log g_i - log g_j = log(mj/mi)·(-1)… ver abajo
+    solve_gains.theta = np.zeros((5, 3), np.float32)
     if not rows_i:
         return np.ones((n, 3), np.float32)
     if tick: tick('resolver', 0, 1)
@@ -265,7 +308,24 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None, log=None):
     for c in range(3):
         wb = np.array(vals[c]) * w2
         B[:, c] = np.bincount(ri, wb, n) - np.bincount(rj, wb, n)
-    lg = _cg_laplacian(ri, rj, w2, B, n)
+    if os.environ.get('AGRO_FIELD', '0') == '1' and m >= 30:
+        yv = np.stack([np.array(vals[c]) for c in range(3)], 1)
+        lg, theta = _cg_joint(ri, rj, w2, yv, np.array(dphis, float), n)
+        solve_gains.theta = theta.astype(np.float32)
+        try:                                             # salto de brillo que queda entre fotos vecinas (lo que se ve como recuadro): sin y con el campo
+            lg0 = _cg_laplacian(ri, rj, w2, B, n)
+            e0 = np.abs(yv - (lg0[ri] - lg0[rj])); e1 = np.abs(yv - (lg[ri] - lg[rj] + np.array(dphis) @ theta))
+            solve_gains.seam = (float(np.median(e0)), float(np.median(e1)), float(np.percentile(e0, 90)), float(np.percentile(e1, 90)))
+            if log:
+                log('exposición: salto de brillo entre fotos vecinas (mediana / p90): sin corregir %.1f %% / %.1f %% -> corregido %.1f %% / %.1f %%'
+                    % (100 * solve_gains.seam[0], 100 * solve_gains.seam[2], 100 * solve_gains.seam[1], 100 * solve_gains.seam[3]))
+        except Exception:
+            pass
+        if log:
+            log('exposición: campo de brillo por ángulo de visión (G): ' + ' '.join('%+.3f' % v for v in theta[:, 1]))
+    else:
+        lg = _cg_laplacian(ri, rj, w2, B, n)
+        solve_gains.theta = np.zeros((5, 3), np.float32)
     # diagnóstico: ¿el grafo de fotos está conectado? (si no, cada grupo queda normalizado por su cuenta y aparecen saltos de brillo entre vuelos)
     par = list(range(n))
     def fd(x):
@@ -437,8 +497,10 @@ def build_pyramid(out_dir, top, nx, ny, progress=None, threads=1):
 # Cada foto dibuja SOLO su zona (los píxeles que están más cerca de su centro que del de cualquier vecina) más un borde angosto de mezcla.
 # Se decodifica una vez y se deforma una fracción de su superficie (con solape 80/70 % es ~6-10 %), en vez de recorrerla una vez por franja.
 CELL = 16            # la zona de cada foto se calcula en una grilla 16 veces más gruesa (suave: no hace falta a 3 cm)
-CELL_FW = 0.012      # semiancho de la mezcla entre zonas, en unidades de radio normalizado (~1,2 m a 3 cm/px)
+CELL_FW = 0.03       # semiancho de la mezcla entre zonas, en unidades de radio normalizado (~3 m a 3 cm/px): con las fotos alineadas (0,2 m) no hay fantasmas y se suaviza cualquier resto de brillo
 STRIPE = 2048        # filas por cerrojo del lienzo
+LEVEL_FW = 0.10      # semiancho (radio normalizado, ~10 m) de la mezcla ANCHA solo de tonos: nivela el brillo suave entre fotos sin mezclar el detalle
+LOW_SIGMA = 6        # suavizado (px de miniatura = 16 px de foto, ~3 m) que separa el tono suave del detalle
 
 
 def _rmap(p, E0, N1, g, c0, y0, nxc, nyc):
@@ -452,7 +514,7 @@ def _rmap(p, E0, N1, g, c0, y0, nxc, nyc):
     r = np.hypot((xi - w / 2) / (w / 2), (yi - h / 2) / (h / 2)) * (1 / math.sqrt(2))
     dmin = np.minimum(np.minimum(xi, w - xi), np.minimum(yi, h - yi)) / min(w, h)
     ok = (dmin > CROP) & (r < RMAX)
-    return r.astype(np.float32), ok
+    return r.astype(np.float32), ok, xi.astype(np.float32), yi.astype(np.float32)
 
 
 def _up(a, sw, sh):
@@ -460,8 +522,30 @@ def _up(a, sw, sh):
     return np.asarray(Image.fromarray(np.ascontiguousarray(a, np.float32), 'F').resize((sw, sh), Image.BILINEAR), np.float32)
 
 
-def render_cells(P, gains, grid, prof, rbins, out_dir, top, quality, nx, ny, nthreads, prog, chk, L, stall_s):
-    """Arma el mosaico a resolución original en un lienzo en disco y lo corta en mosaicos. Devuelve la cantidad de mosaicos escritos."""
+def _low_log(p, gain, prof, rbins):
+    """Log del tono suave de la foto (miniatura corregida por viñeteo y ganancia, suavizada ~3 m)."""
+    a, _ = thumb(p['path'])
+    hh, ww = a.shape[:2]
+    yy, xx = np.mgrid[0:hh, 0:ww]
+    r = np.hypot((xx + .5 - ww / 2) / (ww / 2), (yy + .5 - hh / 2) / (hh / 2)) / math.sqrt(2)
+    a = a * vignette_gain(np.clip(r, 0, 1), prof, rbins) * gain
+    inside = r < RMAX
+    a[~inside] = a[inside].mean(0)                                           # las esquinas oscuras no contaminan el suavizado
+    sm = np.asarray(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(LOW_SIGMA)), np.float32)
+    return np.log(np.maximum(sm, 4.0))
+
+
+def _bilin(a, x, y):
+    h, w = a.shape[:2]
+    x = np.clip(x - 0.5, 0, w - 1.001); y = np.clip(y - 0.5, 0, h - 1.001)
+    x0, y0 = x.astype(np.int32), y.astype(np.int32); fx, fy = (x - x0)[..., None], (y - y0)[..., None]
+    return a[y0, x0] * (1 - fx) * (1 - fy) + a[y0, x0 + 1] * fx * (1 - fy) + a[y0 + 1, x0] * (1 - fx) * fy + a[y0 + 1, x0 + 1] * fx * fy
+
+
+def render_cells(P, gains, grid, prof, rbins, out_dir, top, quality, nx, ny, nthreads, prog, chk, L, stall_s, theta=None):
+    """Arma el mosaico a resolución original en un lienzo en disco y lo corta en mosaicos. Devuelve la cantidad de mosaicos escritos.
+    Fase 1: cada foto calcula su zona y su tono suave; se arma un mosaico de tonos (grueso, mezcla ancha).
+    Fase 2: cada foto dibuja su zona con el tono llevado a ese mosaico de tonos (sin recuadros) y su detalle original."""
     import threading
     from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     E0, N1, g, W, H = grid['E0'], grid['N1'], grid['g'], grid['W'], grid['H']
@@ -478,39 +562,73 @@ def render_cells(P, gains, grid, prof, rbins, out_dir, top, quality, nx, ny, nth
     stop = threading.Event()
     done = [0]; last_news = [time.time()]; dl = threading.Lock()
     tacc = {'zona': 0.0, 'lectura': 0.0, 'mezcla': 0.0, 'espera': 0.0, 'mosaicos': 0.0, 'mp': 0.0}
+    Hc, Wc = H // CELL + 3, W // CELL + 3
+    tone = np.zeros((Hc, Wc, 3), np.float32); tw = np.zeros((Hc, Wc), np.float32); tlock = threading.Lock()
+    info = [None] * n
 
     def neighbors(i):
         d = np.hypot(pos[:, 0] - pos[i, 0], pos[:, 1] - pos[i, 1])
         idx = [j for j in np.argsort(d)[1:25] if d[j] < reach[i] + reach[j]]
         return idx[:14]
 
-    def one(i):
+    def prep(i):
+        """Fase 1: zona de la foto (peso fino), peso ancho para el tono y tono suave de la foto sobre la grilla gruesa común."""
         if stop.is_set():
             raise RuntimeError('Cancelado')
-        p = P[i]; t_a = time.perf_counter()
+        t_a = time.perf_counter()
+        p = P[i]
         fp = footprint(p, 1.0)
         es = [(q[0] - E0) / g for q in fp]; ns = [(N1 - q[1]) / g for q in fp]
         c0, c1 = int(max(0, math.floor(min(es)))), int(min(W, math.ceil(max(es))))
         y0, y1 = int(max(0, math.floor(min(ns)))), int(min(H, math.ceil(max(ns))))
         if c1 <= c0 or y1 <= y0:
             return
+        c0, y0 = (c0 // CELL) * CELL, (y0 // CELL) * CELL                   # alineado a la grilla gruesa común
         nxc, nyc = (c1 - c0 + CELL - 1) // CELL, (y1 - y0 + CELL - 1) // CELL
-        r_i, ok_i = _rmap(p, E0, N1, g, c0, y0, nxc, nyc)
+        r_i, ok_i, xi_, yi_ = _rmap(p, E0, N1, g, c0, y0, nxc, nyc)
         rmin = np.full(r_i.shape, 9.0, np.float32)
         for j in neighbors(i):
-            rj, okj = _rmap(P[j], E0, N1, g, c0, y0, nxc, nyc)
+            rj, okj, _, _ = _rmap(P[j], E0, N1, g, c0, y0, nxc, nyc)
             np.minimum(rmin, np.where(okj, rj, 9.0), out=rmin)
-        w = np.clip(0.5 + (rmin - r_i) / (2 * CELL_FW), 0.0, 1.0) * ok_i
-        ys, xs = np.where(w > 0.002)
+        dlt = rmin - r_i
+        w = np.clip(0.5 + dlt / (2 * CELL_FW), 0.0, 1.0) * ok_i
+        wl = np.clip(0.5 + dlt / (2 * LEVEL_FW), 0.0, 1.0) * ok_i
+        ys, xs = np.where(wl > 0.002)
         if len(ys) == 0:
             return
         ia, ib = max(0, ys.min() - 1), min(nyc, ys.max() + 2)
         ja, jb = max(0, xs.min() - 1), min(nxc, xs.max() + 2)
-        w = w[ia:ib, ja:jb]; rr = np.clip(r_i[ia:ib, ja:jb], 0, 1)
-        cf, yf = c0 + ja * CELL, y0 + ia * CELL
-        sw, sh = (jb - ja) * CELL, (ib - ia) * CELL
+        sl = (slice(ia, ib), slice(ja, jb))
+        wl_s = wl[sl]; w_s = w[sl]; rr = np.clip(r_i[sl], 0, 1)
+        lowt = _low_log(p, gains[i], prof, rbins)
+        sx, sy = p['w'] / lowt.shape[1], p['h'] / lowt.shape[0]
+        low = _bilin(lowt, xi_[sl] / sx, yi_[sl] / sy).astype(np.float32)
+        gy0, gx0 = y0 // CELL + ia, c0 // CELL + ja
+        with tlock:
+            tone[gy0:gy0 + (ib - ia), gx0:gx0 + (jb - ja)] += low * wl_s[..., None]
+            tw[gy0:gy0 + (ib - ia), gx0:gx0 + (jb - ja)] += wl_s
+        info[i] = (gy0, gx0, c0 + ja * CELL, y0 + ia * CELL, w_s, rr, low)
+        with dl:
+            tacc['zona'] += time.perf_counter() - t_a
+
+    def paint(i):
+        """Fase 2: deforma la foto una vez y la escribe en su zona con el tono nivelado."""
+        if stop.is_set():
+            raise RuntimeError('Cancelado')
+        if info[i] is None:
+            return
+        t_a = time.perf_counter()
+        p = P[i]
+        gy0, gx0, cf, yf, w, rr, low = info[i]
+        info[i] = None
+        h_, w_ = w.shape
+        den = tw[gy0:gy0 + h_, gx0:gx0 + w_]
+        delta = np.where((den[..., None] > 1e-3) & (os.environ.get('AGRO_LEVEL', '1') != '0'), tone[gy0:gy0 + h_, gx0:gx0 + w_] / np.maximum(den, 1e-6)[..., None] - low, 0.0)
+        with dl:
+            tacc['d'] = tacc.get('d', 0.0) + float(np.abs(delta[w > 0.5]).mean()) if (w > 0.5).any() else tacc.get('d', 0.0)
+        gv = vignette_gain(rr, prof, rbins) * gains[i] * np.exp(np.clip(delta, -0.2, 0.2))      # (filas, cols, 3) en la grilla gruesa
+        sw, sh = w_ * CELL, h_ * CELL
         wup = _up(w, sw, sh)
-        gv = vignette_gain(rr, prof, rbins) * gains[i]                       # (filas, cols, 3) en la grilla gruesa
         BL = 512                                                             # se procesan solo los bloques donde la foto aporta
         blocks = []
         for by in range(0, sh, BL):
@@ -520,13 +638,11 @@ def render_cells(P, gains, grid, prof, rbins, out_dir, top, quality, nx, ny, nth
         if not blocks:
             return
         t_b = time.perf_counter()
-        t_dec = t_b
         res = []
         with Image.open(p['path']) as im:
             if im.mode != 'RGB':
                 im = im.convert('RGB')
             im.load()
-            t_dec = time.perf_counter()
             for by, bx in blocks:
                 bh, bw = min(BL, sh - by), min(BL, sw - bx)
                 a, b, c, d, e, f = photo_matrix(p, E0 + (cf + bx) * g, N1 - (yf + by) * g, g)
@@ -539,7 +655,6 @@ def render_cells(P, gains, grid, prof, rbins, out_dir, top, quality, nx, ny, nth
                 np.clip(blk, 0, 255, out=blk); blk += 0.5
                 res.append((by, bx, bh, bw, blk.astype(np.uint8)))
         t_c = time.perf_counter()
-        t_d = t_c
         with dl:
             tacc['mp'] += sum(r_[2] * r_[3] for r_ in res) / 1e6
         spans = []
@@ -578,35 +693,45 @@ def render_cells(P, gains, grid, prof, rbins, out_dir, top, quality, nx, ny, nth
                 locks[s_].release()
         t_f = time.perf_counter()
         with dl:
-            tacc['zona'] += t_b - t_a; tacc['lectura'] += t_c - t_b; tacc['espera'] += t_e - t_d; tacc['mezcla'] += t_f - t_e
+            tacc['lectura'] += t_c - t_b; tacc['espera'] += t_e - t_d; tacc['mezcla'] += t_f - t_e; tacc['zona'] += t_b - t_a
 
-    def task(i):
-        one(i)
-        with dl:
-            done[0] += 1; last_news[0] = time.time()
+    def run_phase(fn, p0, p1, label):
+        done[0] = 0; last_news[0] = time.time()
+        def task(i):
+            fn(i)
+            with dl:
+                done[0] += 1; last_news[0] = time.time()
+        ex = ThreadPoolExecutor(max_workers=nthreads)
+        try:
+            pend = set(ex.submit(task, i) for i in range(n)); marks = 0
+            while pend:
+                dn, pend = wait(pend, timeout=0.5, return_when=FIRST_COMPLETED)
+                for f_ in dn:
+                    f_.result()
+                prog(p0 + (p1 - p0) * done[0] / n, '%s · foto %d/%d · %d hilos' % (label, done[0], n, nthreads))
+                if done[0] * 4 // n != marks:
+                    marks = done[0] * 4 // n; L('mosaico: %s %d de %d fotos' % (label, done[0], n))
+                if time.time() - last_news[0] > stall_s:
+                    raise RuntimeError('El armado del mosaico no avanza hace %d s (%d de %d fotos). Mirá el registro (motor.log).' % (int(time.time() - last_news[0]), done[0], n))
+                chk()
+        except BaseException:
+            stop.set(); raise
+        finally:
+            ex.shutdown(wait=True, cancel_futures=True)
 
     L('mosaico (celdas): %d fotos · lienzo de trabajo %.1f GB en disco · %d hilos' % (n, need / 1e9, nthreads))
-    ex = ThreadPoolExecutor(max_workers=nthreads)
     try:
-        futs = [ex.submit(task, i) for i in range(n)]
-        pend = set(futs); marks = 0
-        while pend:
-            dn, pend = wait(pend, timeout=0.5, return_when=FIRST_COMPLETED)
-            for f_ in dn:
-                f_.result()
-            prog(0.12 + 0.70 * done[0] / n, 'Armando mosaico · foto %d/%d · %d hilos' % (done[0], n, nthreads))
-            if done[0] * 5 // n != marks:
-                marks = done[0] * 5 // n; L('mosaico: %d de %d fotos colocadas' % (done[0], n))
-            if time.time() - last_news[0] > stall_s:
-                raise RuntimeError('El armado del mosaico no avanza hace %d s (%d de %d fotos). Mirá el registro (motor.log).' % (int(time.time() - last_news[0]), done[0], n))
-            chk()
+        run_phase(prep, 0.12, 0.28, 'Preparando zonas y tonos')
+        L('mosaico: tonos nivelados entre fotos (mezcla ancha de %.0f m, detalle sin mezclar)' % (2 * LEVEL_FW * 99 * g / 0.03))
+        run_phase(paint, 0.28, 0.82, 'Armando mosaico')
     except BaseException:
-        stop.set(); raise
-    finally:
-        ex.shutdown(wait=True, cancel_futures=True)
-
-    L('mosaico (celdas): tiempo de CPU por etapa (suma de hilos): zonas %.0f s · decodificar+deformar %.0f s · espera de cerrojo %.0f s · mezcla %.0f s · %.1f MP por foto'
-      % (tacc['zona'], tacc['lectura'], tacc['espera'], tacc['mezcla'], tacc['mp'] / max(1, n)))
+        del C, A
+        for pth in (cpath, apath):
+            try: os.remove(pth)
+            except OSError: pass
+        raise
+    L('mosaico (celdas): tiempo de CPU por etapa (suma de hilos): zonas %.0f s · decodificar+deformar %.0f s · espera de cerrojo %.0f s · mezcla %.0f s · %.1f MP por foto · ajuste de tono medio %.1f %%'
+      % (tacc['zona'], tacc['lectura'], tacc['espera'], tacc['mezcla'], tacc['mp'] / max(1, n), 100 * tacc.get('d', 0.0) / max(1, n)))
     # --- cortar el lienzo en mosaicos
     T_ = T
     rows_done = [0]; ntiles = [0]; tl = threading.Lock()
@@ -806,7 +931,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     if os.environ.get('AGRO_RENDER', 'celdas') != 'bandas':
         ts = time.time()
         try:
-            ntiles = render_cells(P, gains, grid, prof, rb, out_dir, top, quality, nx, ny, nwc, prog, chk, L, stall_s)
+            ntiles = render_cells(P, gains, grid, prof, rb, out_dir, top, quality, nx, ny, nwc, prog, chk, L, stall_s, theta=getattr(solve_gains, 'theta', None))
             tm['celdas'] = round(time.time() - ts, 1); L('mosaico: celdas listas en %.1f s (%d mosaicos)' % (tm['celdas'], ntiles))
         except (OSError, MemoryError) as e:
             L('mosaico: no se pudo armar por celdas (%s: %s) -> se arma por franjas' % (type(e).__name__, e))

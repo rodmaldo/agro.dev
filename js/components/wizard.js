@@ -1,4 +1,4 @@
-/* agro.dev · asistente de 3 ventanas tras "Campo": Tipo de imagen → Grilla → Detección de zonas */
+/* agro.dev · asistente tras "Campo": Tipo de imagen → Grilla → Límites → Detección de zonas */
 (function (root) {
   'use strict';
   const { useState, useEffect, useRef, useReducer } = React;
@@ -8,7 +8,7 @@
   const PAL = { salitre: '#E69F00', salinidad: '#E69F00', maleza: '#CC79A7', malezas: '#CC79A7', plaga: '#D55E00', plagas: '#D55E00', anegamiento: '#56B4E9', encharcamiento: '#56B4E9', sequia: '#F0E442' };
   root.AZUI.PAL = PAL;
   const norm = s => s.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const STEPS = ['Campo', 'Tipo de imagen', 'Grilla', 'Detección de zonas'];
+  const STEPS = ['Campo', 'Tipo de imagen', 'Grilla', 'Límites', 'Detección de zonas'];
   const AI_NAME = 'agro-tono · clasificador de tonalidad por celdas';
   const MIN = 5;
 
@@ -22,10 +22,12 @@
     const [ai, setAi] = useState({ st: 'wait', n: 0 });
     const info = job.info, set = p => setUi(u => ({ ...u, ...p })), up = p => setCfg(c => ({ ...c, ...p }));
     const pc = AZ.pointCounts(S);
+    const [gm, setGm] = useState(cfg.gridM); useEffect(() => { setGm(cfg.gridM); }, [cfg.gridM]);
+    const gmOk = isFinite(+gm) && +gm >= 0.5 && +gm <= 20;
 
     useSpace(held, mapApi, e => {
-      if (step !== 2) return;
-      const m = { KeyV: 'pan', KeyA: 'padd', KeyN: 'pneg' }[e.code]; if (m) set({ tool: m });
+      if (step === 3) { const m = { KeyV: 'pan', KeyA: 'padd', KeyN: 'pneg', KeyL: 'poly', KeyM: 'edit' }[e.code]; if (m) setTool(m); }
+      else if (step === 2) { const m = { KeyV: 'pan', KeyL: 'poly', KeyM: 'edit' }[e.code]; if (m) setTool(m); }
     });
 
     /* ---------- paso 1: procesar imágenes ---------- */
@@ -66,13 +68,13 @@
         setCalc(false); bump(); if (fit) mapApi.current.fit();
       }, 30);
     };
-    const onGrid = v => { up({ gridM: v }); reapply(v, cfg.rot, false); };
+    const onGrid = v => { v = Math.max(0.5, Math.min(20, Math.round((+v || 0) * 100) / 100)); setGm(v); up({ gridM: v }); reapply(v, cfg.rot, false); };
     const onRot = v => { v = Math.max(-90, Math.min(90, +v || 0)); up({ rot: v }); reapply(cfg.gridM, v, true); };
 
     /* ---------- paso 3: detección en tiempo real ---------- */
     const entered = useRef(false);
     useEffect(() => {
-      if (step !== 2 || entered.current) return; entered.current = true;
+      if (step !== 3 || entered.current) return; entered.current = true;
       S.meta.det.name = cfg.detName; S.meta.det.color = cfg.color;
       const p = job.preset;
       if (p && !job.presetDone) {   /* proyecto importado: límite y puntos (en coordenadas relativas) */
@@ -96,11 +98,30 @@
     const onName = v => { const c = PAL[norm(v)]; S.meta.det.name = v; up({ detName: v, ...(c ? { color: c } : {}) }); if (c) S.meta.det.color = c; S.ver++; };
     const ready = pc.pos >= MIN && pc.neg >= MIN && ai.st === 'ok' && ai.n > 0 && cfg.detName.trim().length > 0;
     const finish = () => { S.meta.det.name = cfg.detName.trim(); S.meta.det.color = cfg.color; AZ.mergeDet(S); onDone(); };
-    const st = step === 2 && S.gw && S.det.length ? AZ.stats(S) : null;
-    const api = { refresh: bump, set, toast, onPoint, closePoly() { }, polyChanged() { } };
+    const st = step === 3 && S.gw && S.det.length ? AZ.stats(S) : null;
+    const setTool = t => { if (t !== 'poly') S.tmp = []; set({ tool: t }); mapApi.current.redraw && mapApi.current.redraw(); };
+    const polyChanged = () => { AZ.polyChanged(S); bump(); if (step === 3 && AZ.pointCounts(S).pos) schedule(0); };
+    const closePoly = () => { if (S.tmp.length < 3) return toast('El límite necesita al menos 3 vértices'); S.poly = S.tmp; S.tmp = []; polyChanged(); setTool('edit'); };
+    const resetPoly = () => { S.poly = [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]]; S.tmp = []; polyChanged(); };
+    const polyHa = () => { const P = S.poly || []; let a = 0; for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; a += p[0] * q[1] - q[0] * p[1]; } return Math.abs(a) / 2 * S.mpp * S.mpp / 1e4; };
+    const fileR = useRef();
+    const importLimit = async file => {
+      if (!file) return;
+      if (/\.(kmz|shp|zip|dbf)$/i.test(file.name)) return toast('Formato no admitido. Exportá el límite como KML o GeoJSON desde el monitor.');
+      if (!S.geo) return toast('Este lote no tiene coordenadas: dibujá el límite en el mapa.');
+      let rings; try { rings = AZ.X.parseBoundary(await file.text()); } catch (e) { rings = []; }
+      if (!rings.length) return toast('No encontré ningún polígono en ' + file.name + '. Probá con un KML o GeoJSON.');
+      const areaOf = r => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return Math.abs(a); };
+      rings.sort((a, b) => areaOf(b) - areaOf(a));
+      S.poly = rings[0].map(p => AZ.geoToPx(S, p[1], p[0])); S.tmp = [];
+      const out = S.poly.every(p => p[0] < 0 || p[0] > S.W || p[1] < 0 || p[1] > S.H);
+      polyChanged(); set({ tool: 'edit' });
+      toast(out ? 'El límite cae fuera del mapa: revisá que corresponda a este lote' : 'Límite cargado' + (rings.length > 1 ? ' (el polígono más grande de ' + rings.length + ')' : '') + ': ' + f1(polyHa(), 1) + ' ha');
+    };
+    const api = { refresh: bump, set, toast, onPoint, closePoly, polyChanged };
 
     const goStep = i => { if (i === 0) return onBack(); const t = i - 1; if (t < step) { entered.current = false; setStep(t); } };
-    const next = () => { if (step === 0) process(); else if (step === 1) setStep(2); };
+    const next = () => { if (step === 0) process(); else if (step === 1 || step === 2) setStep(step + 1); };
     const stepIdx = step + 1;   // la barra incluye "Campo" como paso 0 ya hecho
 
     const stage = (tools) => html`<${MapCanvas} S=${S} rev=${rev} ui=${ui} held=${held} api=${api} mapApi=${mapApi}>
@@ -111,7 +132,7 @@
 
     return html`<div className="screen">
       <header className="top"><button className="lnk" type="button" onClick=${onBack} aria-label="Volver a Campo"><${Ic} n="back" s=${16}/></button><div className="brand">agro<i>.dev</i></div><span className="crumb">${field.name}</span>
-        <span className="grow"></span><span className="usr">${user}</span><button className="lnk" type="button" onClick=${onLogout}>Salir</button></header>
+        <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span><button className="lnk" type="button" onClick=${onLogout}>Salir</button></header>
       <${StepBar} steps=${STEPS} cur=${stepIdx} onGo=${goStep}/>
 
       ${step === 0 && html`<main className="wbody one"><div className="wscroll">
@@ -153,8 +174,12 @@
       ${step === 1 && html`<main className="wbody">
         <aside className="wpanel">
           <h2>Configurar grilla</h2>
-          <${Slider} label="Tamaño de celda" min=${0.5} max=${20} step=${0.5} value=${cfg.gridM} unit=" m" fmt=${v => f1(v, 1)} onChange=${() => { }} onCommit=${onGrid}/>
-          <div className="mu">Mínimo 0,50 m · máximo 20 m. Celdas chicas = más detalle y más cálculo.</div>
+          <label className="fld"><span className="fl">Tamaño de celda (metros)<b>actual: ${f1(cfg.gridM, 2)} m</b></span>
+            <div className="row"><input type="number" min="0.5" max="20" step="0.5" value=${gm} onInput=${e => setGm(e.target.value)} onKeyDown=${e => { if (e.key === 'Enter' && gmOk) onGrid(gm); }} aria-label="Tamaño de celda en metros"/><span className="mu fx">m</span>
+              <button className="btn sm pri" type="button" disabled=${!gmOk || calc || +gm === cfg.gridM} onClick=${() => onGrid(gm)}>Aplicar</button></div></label>
+          <${Slider} label="" min=${0.5} max=${20} step=${0.5} value=${gmOk ? +gm : cfg.gridM} unit=" m" fmt=${v => f1(v, 1)} onChange=${v => setGm(v)}/>
+          <div className="mu">Escribí los metros o mové la barra y tocá <b>Aplicar</b> para recalcular. Mínimo 0,50 m · máximo 20 m. Celdas chicas = más detalle y más cálculo.</div>
+          ${!gmOk && html`<div className="note w">Ingresá un valor entre 0,5 y 20 m.</div>`}
           <label className="fld"><span className="fl">Orientación de la grilla<b>${f1(cfg.rot, 1)}°</b></span>
             <div className="row"><input type="number" min="-90" max="90" step="0.5" value=${cfg.rot} onChange=${e => onRot(e.target.value)} aria-label="Orientación en grados"/><span className="mu fx">grados</span></div></label>
           <${Slider} label="" min=${-90} max=${90} step=${0.5} value=${cfg.rot} unit="°" fmt=${v => f1(v, 1)} onChange=${() => { }} onCommit=${onRot}/>
@@ -176,6 +201,24 @@
 
       ${step === 2 && html`<main className="wbody">
         <aside className="wpanel">
+          <h2>Límites del lote</h2>
+          <div className="note">Delimitá el lote para que solo se analice y se mida lo que está adentro. Podés dibujarlo en el mapa o cargar el límite que grabó el monitor del pulverizador, tractor o sembradora.</div>
+          <div className="row"><button className="btn sm" type="button" onClick=${() => fileR.current.click()}>Importar KML / GeoJSON…</button>
+            <input ref=${fileR} type="file" accept=".kml,.geojson,.json,application/vnd.google-earth.kml+xml,application/geo+json,application/json" hidden onChange=${e => { importLimit(e.target.files[0]); e.target.value = ''; }}/></div>
+          <div className="row"><button className=${'btn sm' + (ui.tool === 'poly' ? ' pri' : '')} type="button" onClick=${() => setTool('poly')}>Dibujar límite (L)</button><button className=${'btn sm' + (ui.tool === 'edit' ? ' pri' : '')} type="button" onClick=${() => setTool('edit')}>Editar vértices (M)</button></div>
+          <button className="btn sm" type="button" onClick=${resetPoly}>Restablecer (imagen completa)</button>
+          <div className="mu">Dibujar: clic en cada esquina y cerrá tocando el primer punto (o doble clic). Editar: arrastrá un vértice; Shift + clic lo borra.</div>
+          <div className="kv-box">
+            <div className="kv"><span>Superficie del mapa</span><span>${f1(AZ.coverHa(S), 1)} ha</span></div>
+            <div className="kv"><span>Dentro del límite</span><span>${f1(polyHa(), 1)} ha</span></div>
+            <div className="kv"><span>Vértices</span><span>${(S.poly || []).length}</span></div></div>
+          <div className="mu">Si no cargás un límite se usa la imagen completa. Después de detectar podrás seguir editándolo.</div>
+          <${Slider} label="Opacidad de la grilla" min=${0} max=${100} value=${ui.gridOp} unit=" %" onChange=${v => set({ gridOp: v })}/>
+        </aside>
+        ${stage([['pan', 'move', 'Mover (V)'], ['poly', 'poly', 'Dibujar límite (L)'], ['edit', 'edit', 'Editar límite (M)']])}</main>`}
+
+      ${step === 3 && html`<main className="wbody">
+        <aside className="wpanel">
           <h2>Detección de zonas</h2>
           <label className="fld"><span className="fl">Nombre de la detección</span>
             <div className="row"><input type="text" maxLength="40" placeholder="Ej.: Salitre" value=${cfg.detName} onInput=${e => onName(e.target.value)} aria-label="Nombre de la detección"/>
@@ -194,15 +237,16 @@
             <div className="mu">Compara la tonalidad (color, brillo, saturación, verdor) de cada celda con la de tus puntos y revalida en tiempo real.</div>
           </div>
           <${Slider} label="Sensibilidad" min=${0} max=${100} value=${cfg.sens} unit=" %" onChange=${() => { }} onCommit=${v => { sensR.current = v; up({ sens: v }); schedule(0); }}/>
+          ${(ui.tool === 'poly' || ui.tool === 'edit') && html`<div className="note">Editando el límite del lote (${f1(polyHa(), 1)} ha). Al cambiarlo se recalcula la detección. <button className="btn sm" type="button" onClick=${resetPoly}>Restablecer</button></div>`}
           <div className="row"><button className="btn sm" type="button" onClick=${undo} disabled=${!S.pts.length}><${Ic} n="undo" s=${13}/> Deshacer</button><button className="btn sm" type="button" onClick=${clear} disabled=${!S.pts.length}>Borrar puntos</button></div>
           <${Slider} label="Opacidad de la grilla" min=${0} max=${100} value=${ui.gridOp} unit=" %" onChange=${v => set({ gridOp: v })}/>
         </aside>
-        ${stage([['pan', 'move', 'Mover (V)'], ['padd', 'plus', 'Punto positivo + (A)'], ['pneg', 'minus', 'Punto negativo − (N)']])}</main>`}
+        ${stage([['pan', 'move', 'Mover (V)'], ['padd', 'plus', 'Punto positivo + (A)'], ['pneg', 'minus', 'Punto negativo − (N)'], ['poly', 'poly', 'Dibujar límite (L)'], ['edit', 'edit', 'Editar límite (M)']])}</main>`}
 
       <div className="bar">
         <button className="btn" type="button" onClick=${() => (step === 0 ? onBack() : goStep(step))}>Atrás</button><span className="grow"></span>
-        ${step < 2 && html`<button className="btn pri" type="button" disabled=${step === 0 ? (!canProcess || needIdx || !!prog) : calc} onClick=${next}>Siguiente</button>`}
-        ${step === 2 && html`<button className="btn pri" type="button" disabled=${!ready} onClick=${finish} title=${ready ? '' : 'Faltan puntos o la detección todavía no terminó'}>Finalizar detección</button>`}
+        ${step < 3 && html`<button className="btn pri" type="button" disabled=${step === 0 ? (!canProcess || needIdx || !!prog) : calc} onClick=${next}>Siguiente</button>`}
+        ${step === 3 && html`<button className="btn pri" type="button" disabled=${!ready} onClick=${finish} title=${ready ? '' : 'Faltan puntos o la detección todavía no terminó'}>Finalizar detección</button>`}
       </div>
       <${Foot}/>
       ${prog && html`<${ProcessDialog} prog=${prog} onCancel=${() => { cancel.current.v = true; }}/>`}

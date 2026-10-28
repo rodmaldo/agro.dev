@@ -84,6 +84,23 @@ ipcMain.handle('dialog:folders', async () => { const r = await dialog.showOpenDi
 ipcMain.handle('dialog:files', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí archivos', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff'] }] }); setTimeout(refocus, 50); return r.canceled ? [] : r.filePaths; });
 ipcMain.handle('engine:call', (_e, id, cmd, args) => call(id, cmd, args));
 ipcMain.handle('engine:cancel', (_e, id) => call(--internalId, 'cancel', { target: id }));   // ids negativos: llamadas internas
+/* Informe PDF real: imprime el HTML en una ventana oculta y guarda el archivo que elija el usuario */
+ipcMain.handle('report:pdf', async (_e, htmlText, name) => {
+  const safe = String(name || 'informe').replace(/[^\w.\- áéíóúñÁÉÍÓÚÑ]+/g, '_');
+  const r = await dialog.showSaveDialog(win, { title: 'Guardar informe en PDF', defaultPath: path.join(app.getPath('documents'), safe.replace(/\.pdf$/i, '') + '.pdf'), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+  if (r.canceled || !r.filePath) return { canceled: true };
+  const tmp = path.join(app.getPath('temp'), 'agro-informe-' + Date.now() + '.html');
+  fs.writeFileSync(tmp, htmlText, 'utf8');
+  const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
+  try {
+    await w.loadFile(tmp);
+    await new Promise(r => setTimeout(r, 400));
+    const buf = await w.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'default' } });
+    fs.writeFileSync(r.filePath, buf);
+    shell.showItemInFolder(r.filePath);
+    return { path: r.filePath };
+  } finally { w.destroy(); try { fs.unlinkSync(tmp); } catch (e) { } }
+});
 ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));
 
 const lock = app.requestSingleInstanceLock();

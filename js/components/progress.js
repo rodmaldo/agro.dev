@@ -75,5 +75,12 @@
       ${v.adv && html`<div className="note w">Con 90 % la PC trabaja al límite: más temperatura y ventiladores al máximo, y el resto de programas puede ir más lento. Usalo solo con buena ventilación.</div>`}
       <button className="btn" type="button" onClick=${onClose}>Listo</button></div></div>`;
   };
+  /* ícono de ajustes (engranaje) para la barra superior: abre Rendimiento (solo en la versión de escritorio) */
+  root.AZUI.GearBtn = function GearBtn() {
+    const [open, setOpen] = useState(false);
+    if (!(root.AZDesktop && root.AZDesktop.available)) return null;
+    return html`<button className="lnk gear" type="button" onClick=${() => setOpen(true)} aria-label="Ajustes de rendimiento" title="Rendimiento: cuánto de tu PC usa el procesado"><${root.AZUI.Ic} n="gear" s=${17}/></button>
+      ${open && html`<${root.AZUI.PerfModal} onClose=${() => setOpen(false)}/>`}`;
+  };
   root.AZUI.fmtDur = fmtDur; root.AZUI.fmtClock = fmtClock;
 })(window);

@@ -38,7 +38,7 @@ globalThis.htm={bind:h=>miniHtm.bind(h)};
 const realUS=React.useState;let FORCE=null;
 React.useState=init=>{let v=typeof init==='function'?init():init;if(FORCE&&v&&v.tool==='pan'&&v.vis)v={...v,...FORCE};return realUS(()=>v)};
 const base=path.join(__dirname,'..','js')+'/';
-for(const f of['api.js','engine.js','layers.js','exporter.js','geo.js','mosaic.js','map.js','files.js','desktop.js','sys.js','components/common.js','components/shared.js','components/splash.js','components/home.js','components/mapcanvas.js','components/wizard.js','components/dashboard.js'])require(base+f);
+for(const f of['api.js','engine.js','layers.js','exporter.js','geo.js','mosaic.js','map.js','files.js','desktop.js','sys.js','components/common.js','components/shared.js','components/splash.js','components/progress.js','components/home.js','components/mapcanvas.js','components/wizard.js','components/dashboard.js'])require(base+f);
 const U=AZUI,h=React.createElement;
 const ok=(n,el,...must)=>{const s=Server.renderToString(el);const miss=must.filter(m=>!m.test(s));console.log(miss.length?'FALLA':'OK',n,s.length,'bytes',miss.map(String).join(' '));if(miss.length)process.exitCode=1;return s};
 ok('Splash',h(U.Splash,{phase:'splash',onEnter(){}}));
@@ -51,7 +51,7 @@ ok('Field con vuelo',h(U.Field,{user:'rodma',field,job:{items:[1],info,preset:nu
 const mkS=()=>{const d=AZ.demoPixels(),c={width:d.W,height:d.H,getContext:()=>({getImageData:()=>({data:d.data})})},S=AZ.newState();AZ.setImage(S,c,d.mpp,d.poly);AZ.prepare(S,5);return S};
 const cfg={kind:'rgb',source:'mosaic',ndvi:null,res:'3',quality:'media',detail:'norm',prec:'rtk',lat:-33.1,lon:-61.2,gridM:5,rot:0,detName:'Salitre',color:'#E69F00',sens:50};
 const job={items:[1],info,preset:null,base:{},note:'2 de 2 fotos'};
-for(const [st,re] of [[0,[/Tipo de im/,/RGB \+ Multiespectral/,/Par.metros avanzados/]],[1,[/Configurar grilla/,/Orientaci.n de la grilla/,/Usar rumbo del vuelo/]],[2,[/Detecci.n de zonas/,/Procesamiento por IA/,/agro-tono/,/al menos 5 puntos positivos/]]]){
+for(const [st,re] of [[0,[/Tipo de im/,/RGB \+ Multiespectral/,/Par.metros avanzados/]],[1,[/Configurar grilla/,/Orientaci.n de la grilla/,/Usar rumbo del vuelo/,/Aplicar/]],[2,[/L.mites del lote/,/Importar KML/,/Dentro del l.mite/]],[3,[/Detecci.n de zonas/,/Procesamiento por IA/,/agro-tono/,/al menos 5 puntos positivos/]]]){
   const S=mkS();ok('Wizard paso '+st,h(U.Wizard,{user:'rodma',field,job,S,cfg,setCfg(){},initStep:st,onBack(){},onDone(){},onLogout(){}}),...re);}
 /* Dashboard con detección, manual, histograma y buffer */
 const S=mkS();

@@ -4,6 +4,31 @@
   'use strict';
   const AZ = root.AZ, X = {};
   AZ.X = X;
+  /* Límites de lote desde KML o GeoJSON (monitor del pulverizador/tractor/sembradora): devuelve anillos [[lon,lat],...] */
+  X.parseBoundary = function (text) {
+    const rings = [];
+    const clean = r => { const o = r.filter(p => isFinite(p[0]) && isFinite(p[1]) && Math.abs(p[0]) <= 180 && Math.abs(p[1]) <= 90); if (o.length > 1 && o[0][0] === o[o.length - 1][0] && o[0][1] === o[o.length - 1][1]) o.pop(); return o; };
+    const add = r => { const c = clean(r); if (c.length >= 3) rings.push(c); };
+    const t = String(text || '').trim();
+    if (t[0] === '{' || t[0] === '[') {
+      let j; try { j = JSON.parse(t); } catch (e) { return rings; }
+      const geom = g => {
+        if (!g) return;
+        if (g.type === 'Polygon') add(g.coordinates[0] || []);
+        else if (g.type === 'MultiPolygon') g.coordinates.forEach(p => add(p[0] || []));
+        else if (g.type === 'LineString') add(g.coordinates);
+        else if (g.type === 'GeometryCollection') (g.geometries || []).forEach(geom);
+        else if (g.type === 'Feature') geom(g.geometry);
+        else if (g.type === 'FeatureCollection') (g.features || []).forEach(geom);
+      };
+      geom(j); return rings;
+    }
+    const re = /<coordinates[^>]*>([\s\S]*?)<\/coordinates>/gi; let m;
+    while ((m = re.exec(t))) {
+      add(m[1].trim().split(/\s+/).map(s => s.split(',').map(Number)).filter(a => a.length >= 2));
+    }
+    return rings;
+  };
 
   X.MACHINES = [
     { id: 'jd-gen5', name: 'John Deere · Display GEN5 (Command Center / 4600)', note: 'Shapefile (.shp/.shx/.dbf/.prj). Importar con USB o desde Operations Center.' }
