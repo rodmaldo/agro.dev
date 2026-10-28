@@ -1,7 +1,10 @@
 // Puente seguro entre la interfaz (web) y el proceso principal. La web solo ve window.agroDesktop.
 const { contextBridge, ipcRenderer } = require('electron');
-let seq = 0; const cbs = new Map();
-ipcRenderer.on('engine:event', (_e, m) => { const f = cbs.get(m.id); if (f) { try { f(m); } catch (x) { } } });
+let seq = 0; const cbs = new Map(); const logCbs = new Set();
+ipcRenderer.on('engine:event', (_e, m) => {
+  if (m.type === 'log') { logCbs.forEach(f => { try { f(m); } catch (x) { } }); return; }      // el registro llega a todos los suscriptores
+  const f = cbs.get(m.id); if (f) { try { f(m); } catch (x) { } }
+});
 contextBridge.exposeInMainWorld('agroDesktop', {
   isDesktop: true,
   version: () => ipcRenderer.invoke('app:version'),
@@ -17,6 +20,7 @@ contextBridge.exposeInMainWorld('agroDesktop', {
   cancel: id => ipcRenderer.invoke('engine:cancel', id),
   reveal: p => ipcRenderer.invoke('shell:reveal', p),
   workdir: () => ipcRenderer.invoke('app:workdir'),
+  onLog: cb => { logCbs.add(cb); return () => logCbs.delete(cb); },
   logdir: () => ipcRenderer.invoke('app:logdir'),
   openLogs: () => ipcRenderer.invoke('app:openlogs')
 });

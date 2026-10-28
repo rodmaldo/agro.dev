@@ -453,6 +453,8 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         chk()
         if i % 10 == 0:
             prog(0.02 + 0.06 * i / n, 'Corrigiendo viñeteo · foto %d/%d' % (i, n))
+        if i % max(1, n // 5) == 0:
+            L('viñeteo: foto %d de %d' % (i, n))
     rb, prof = vignette_profile(P, tick=vtick)
     tm['viñeteo'] = round(time.time() - ts, 1); L('mosaico: viñeteo listo en %.1f s' % tm['viñeteo'])
 
@@ -464,6 +466,8 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         txt = {'miniaturas': 'miniaturas %d/%d' % (i, n), 'pares': 'comparando fotos vecinas %d/%d' % (i, n), 'resolver': 'resolviendo ganancias'}[stage]
         if stage == 'resolver': L('mosaico: resolviendo ganancias de exposición')
         prog(0.08 + 0.04 * fr_, 'Igualando exposición entre fotos · ' + txt)
+        if stage != 'resolver' and i and i % max(1, n // 4) == 0:
+            L('exposición: %s' % txt)
     gains = solve_gains(P, fr, prof, rb, g, tick=gtick)
     tm['exposición'] = round(time.time() - ts, 1); L('mosaico: exposición lista en %.1f s' % tm['exposición'])
 
@@ -488,7 +492,8 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         for k in range(k0, k1 + 1):
             sels[k].append(p); sgs[k].append(gains[i])
     jobs = [(k, ty0, ty1, sels[k], grid, prof, rb, sgs[k], out_dir, top, quality) for k, ty0, ty1 in bands if sels[k]]
-    L('mosaico: %d franjas de %d fila(s) de mosaicos · %d trabajador(es) · %.1f GB por trabajador' % (len(jobs), bandh, nw, per_worker / 1e9))
+    L('mosaico: %d franjas de %d fila(s) de mosaicos · %d trabajador(es) · %.1f GB por trabajador · RAM libre %.1f GB · %d fotos por franja (máx.)'
+      % (len(jobs), bandh, nw, per_worker / 1e9, total_ram() / 1e9, max(len(j[3]) for j in jobs)))
 
     weight = {j[0]: len(j[3]) * 1.15 for j in jobs}          # fotos + escritura de mosaicos
     total_w = max(1.0, sum(weight.values()))
@@ -509,6 +514,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         try:
             for j in todo:
                 r = render_band(j); finished[r[0]] = (r[1], r[2]); report(mode, True)
+                L('franja %d/%d lista · %d fotos · %d mosaicos' % (len(finished), len(jobs), r[1], r[2]))
         finally:
             _PROG = None
 
@@ -551,8 +557,7 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
                     kind = None
                 if kind == 'ok':
                     finished[r[0]] = (r[1], r[2]); ndone += 1
-                    if ndone == 1:
-                        L('mosaico: primera franja lista a los %.1f s' % (time.time() - t_start))
+                    L('franja %d/%d lista · %d fotos · %d mosaicos · %.0f s' % (ndone, len(todo), r[1], r[2], time.time() - t_start))
                 elif kind == 'err':
                     raise r
                 if not state and not finished:
@@ -582,8 +587,11 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     # --- pirámide de vistas reducidas
     ts = time.time()
     prog(0.92, 'Generando vistas reducidas', True)
+    lastp = [-1]
     def ptick(f):
         chk(); prog(0.92 + 0.07 * f, 'Generando vistas reducidas · %d%%' % int(f * 100))
+        if int(f * 10) != lastp[0]:
+            lastp[0] = int(f * 10); L('vistas reducidas: %d%%' % int(f * 100))
     build_pyramid(out_dir, top, nx, ny, ptick, threads=nw)
     tm['vistas'] = round(time.time() - ts, 1); L('mosaico: vistas reducidas listas en %.1f s' % tm['vistas'])
     hl = hull(corners)

@@ -14,6 +14,15 @@
     });
   };
 
+  /* ---- Registro: todo lo que informa el motor (y la interfaz) queda en D.logs; la sección "Registro" lo muestra en vivo ---- */
+  D.logs = []; const subs = new Set();
+  D.onLog = f => { subs.add(f); return () => subs.delete(f); };
+  D.addLog = (msg, src, t) => {
+    const l = { t: t || Date.now() / 1000, msg: (src ? src + ': ' : '') + String(msg) };
+    D.logs.push(l); if (D.logs.length > 3000) D.logs.splice(0, D.logs.length - 2500);
+    subs.forEach(f => { try { f(l); } catch (e) { } });
+  };
+  if (D.available && api().onLog) api().onLog(m => D.addLog(m.msg, '', m.t));
   D.pickFolders = () => api().pickFolders();
 
   /* Revisa carpetas y devuelve un "info" con la misma forma que AZFiles.analyze (más native:true) */

@@ -34,10 +34,13 @@
       cancel.current = { v: false }; const T0 = Date.now(); job.timing = null;
       const upd = (pct, msg) => setProg({ pct, msg, t0: T0, last: Date.now(), watch: !!info.native });
       upd(0, 'Leyendo posiciones GPS…');
+      const dlog = m => { if (info.native && root.AZDesktop) root.AZDesktop.addLog(m, 'Interfaz'); };
+      dlog('procesar: ' + info.raw.length + ' fotos · salida ' + (cfg.outRes === 'orig' ? 'resolución original' : cfg.outRes + ' cm/px') + ' · grilla ' + cfg.gridM + ' m');
       try {
         if (info.native) {                       // escritorio: ortomosaico a resolución original + celdas calculadas por el motor
           const base = await AZDesktop.buildBase({ files: info.raw, name: field.name, outRes: cfg.outRes === 'orig' ? null : +cfg.outRes, rtk: cfg.prec === 'rtk' }, upd, cancel.current);
           job.base = base; job.note = base.note; job.timing = base.timing;
+          dlog('ortomosaico listo · ' + base.note);
           await AZFiles.applyTiled(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det', (p, m) => upd(0.92 + 0.08 * p, m), cancel.current);
           setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
           return;
@@ -48,7 +51,7 @@
         upd(0.95, 'Calculando grilla…'); await new Promise(r => setTimeout(r, 30));
         AZFiles.apply(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det');
         setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
-      } catch (e) { setProg(null); toast(/cancelad/i.test(e.message) ? 'Proceso cancelado' : 'No se pudo procesar: ' + e.message); }
+      } catch (e) { dlog('ERROR: ' + e.message); setProg(null); toast(/cancelad/i.test(e.message) ? 'Proceso cancelado' : 'No se pudo procesar: ' + e.message); }
     };
     const canProcess = info && (info.native ? info.raw.length >= 2 && info.geoPhotos > 0 : cfg.source === 'mosaic' ? info.raw.length >= 2 && info.geoPhotos > 0 : cfg.source === 'ortho' ? !!info.ortho : info.raw.length > 0) && !(cfg.kind === 'ms' && cfg.source === 'mosaic' && !info.raw.length)
       && (info.native || (isFinite(+cfg.lat) && isFinite(+cfg.lon) && Math.abs(+cfg.lat) <= 90 && Math.abs(+cfg.lon) <= 180 && +cfg.res > 0));

@@ -60,6 +60,7 @@ def emit(obj):
 
 _log_lock = threading.Lock()
 _log_path = None
+_tl = threading.local()          # id del comando que está ejecutando este hilo
 
 
 def log_path():
@@ -81,6 +82,7 @@ def log_path():
 
 def log(msg):
     """Una línea con fecha y hora en motor.log (siempre se escribe aunque la ventana no esté mirando)."""
+    t = time.time()
     line = time.strftime('%Y-%m-%d %H:%M:%S') + ' [%d] ' % os.getpid() + str(msg)
     with _log_lock:
         try:
@@ -88,6 +90,7 @@ def log(msg):
                 f.write(line + '\n')
         except Exception:
             pass
+    emit({'id': getattr(_tl, 'mid', None), 'type': 'log', 'msg': str(msg), 't': round(t, 2)})     # la ventana lo muestra en "Registro"
 
 
 # ----------------------------------------------------------------------------------------------- scan
@@ -573,6 +576,7 @@ def _has(mod):
 def run(mid, cmd, args):
     job = Job(mid)
     JOBS[mid] = job
+    _tl.mid = mid
     try:
         fn = COMMANDS.get(cmd)
         if cmd != 'ping':
@@ -581,7 +585,8 @@ def run(mid, cmd, args):
             raise RuntimeError('Comando desconocido: ' + str(cmd))
         emit({'id': mid, 'type': 'result', 'data': fn(args or {}, job)})
     except Exception as e:
-        log('comando %s: error %s' % (cmd, e))
+        import traceback
+        log('comando %s: ERROR %s\n%s' % (cmd, e, traceback.format_exc()))
         emit({'id': mid, 'type': 'error', 'error': str(e)})
     finally:
         JOBS.pop(mid, None)

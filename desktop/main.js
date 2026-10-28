@@ -22,9 +22,10 @@ function startEngine() {
     else if (m.type === 'error' && p) { pending.delete(m.id); p.resolve({ id: m.id, error: m.error }); }
     else if (win && !win.isDestroyed()) win.webContents.send('engine:event', m);
   });
-  engine.stderr.on('data', d => console.error('[engine]', String(d).trim()));
+  const toLog = msg => { if (win && !win.isDestroyed()) win.webContents.send('engine:event', { type: 'log', msg, t: Date.now() / 1000 }); };
+  readline.createInterface({ input: engine.stderr }).on('line', l => { if (l.trim()) { console.error('[engine]', l); toLog('[motor/stderr] ' + l); } });
   engine.on('error', e => { for (const p of pending.values()) p.resolve({ error: 'No se pudo iniciar el motor: ' + e.message }); pending.clear(); engine = null; });
-  engine.on('exit', code => { for (const p of pending.values()) p.resolve({ error: 'El motor se cerró (código ' + code + ')' }); pending.clear(); engine = null; });
+  engine.on('exit', code => { toLog('El motor se cerró (código ' + code + ')'); for (const p of pending.values()) p.resolve({ error: 'El motor se cerró (código ' + code + ')' }); pending.clear(); engine = null; });
 }
 
 let internalId = 0;

@@ -43,8 +43,8 @@
   /* pie común: versión a la derecha, equipo a la izquierda */
   U.Foot = function Foot() {
     const [sp] = useState(() => AZSys.detect());
-    const [ver, setVer] = useState(AZSys.VERSION);
+    const [ver, setVer] = useState(AZSys.VERSION); const [showLog, setShowLog] = useState(false);
     useEffect(() => { const d = root.agroDesktop; if (d && d.version) d.version().then(v => v && setVer(v + ' · escritorio'), () => {}); }, []);
-    return html`<footer className="foot"><span className="specs" title="Especificaciones detectadas por el navegador (el nombre exacto del procesador no está disponible)">${sp.map(x => html`<span key=${x[0]}>${x[0]} <b>${x[1]}</b></span>`)}</span><span className="ver">agro.dev v${ver}</span></footer>`;
+    return html`<footer className="foot"><span className="specs" title="Especificaciones detectadas por el navegador (el nombre exacto del procesador no está disponible)">${sp.map(x => html`<span key=${x[0]}>${x[0]} <b>${x[1]}</b></span>`)}</span><span className="ver">${root.AZDesktop && root.AZDesktop.available && html`<button className="lnk" type="button" onClick=${() => setShowLog(true)}>Registro</button> · `}agro.dev v${ver}</span>${showLog && html`<${U.LogModal} onClose=${() => setShowLog(false)}/>`}</footer>`;
   };
 })(window);

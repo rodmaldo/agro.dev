@@ -150,7 +150,13 @@ input[type=range]:hover::-webkit-slider-thumb,input[type=range]:active::-webkit-
 .stat .k i{width:9px;height:9px;display:inline-block}
 .pbar{height:3px;background:var(--ln)}
 .pbar div{height:100%;transition:width .4s}
-.pdlg{width:390px}
+.pdlg{width:390px;transition:width .25s cubic-bezier(.22,1,.36,1)}.pdlg.wide{width:640px}.logmodal{width:min(860px,94vw)}
+.logsec{display:flex;flex-direction:column;gap:6px}
+.logbox{overflow:auto;background:#050706;border:1px solid var(--ln);font:11px/17px var(--mono);padding:6px 8px;color:var(--tx)}
+.logbox .ln{white-space:pre-wrap;word-break:break-word}.logbox .ln span{color:var(--mu);margin-right:10px}
+.logbox .ln.er{color:#ff8a65}.logbox .ln.wa{color:#f0c040}
+.logbar{display:flex;gap:14px;margin-top:6px}
+@media (prefers-reduced-motion:reduce){.pdlg{transition:none}}
 .pstage{display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-size:12px}.pstage b{font:700 13px var(--mono);color:var(--ac);white-space:nowrap}
 .pbar2{height:6px;background:var(--ln);overflow:hidden}
 .pbar2 .fill{height:100%;background:var(--ac);position:relative;overflow:hidden;transition:width .6s cubic-bezier(.22,1,.36,1)}
