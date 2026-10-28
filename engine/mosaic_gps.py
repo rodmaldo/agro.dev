@@ -863,10 +863,22 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
     if os.environ.get('AGRO_ALIGN', '1') != '0' and len(P) >= 12:
         ts = time.time()
         def atick(i, n):
-            chk(); prog(0.0 + 0.02 * i / max(1, n), 'Alineando fotos entre sí · par %d/%d' % (i, n))
+            chk(); prog(0.0 + 0.03 * (i / max(1, n) if n > 1 else i), 'Alineando fotos entre sí por puntos de imagen…' if n <= 1 else 'Alineando fotos entre sí · par %d/%d' % (i, n))
         try:
             import photo_align
-            al = photo_align.align(P, log=L, tick=atick, threads=nwc, cancel=lambda: bool(cancel and cancel()))
+            cn = lambda: bool(cancel and cancel())
+            al = None
+            try:                                   # 1) puntos de imagen (SIFT) + ajuste por foto: posición, giro y escala
+                import photo_match
+                if os.environ.get('AGRO_MATCH', '1') != '0' and photo_match.available():
+                    al = photo_match.align(P, photo_align.gray_thumb, log=L, tick=lambda a, b: atick(a, b), threads=nwc, cancel=cn)
+                    if al: al['metodo'] = 'puntos'
+            except RuntimeError:
+                raise
+            except Exception as e:
+                L('alineación por puntos: error (%s: %s); se usa la correlación de fase' % (type(e).__name__, e)); al = None
+            if not al:                             # 2) respaldo: correlación de fase entre vecinas
+                al = photo_align.align(P, log=L, tick=atick, threads=nwc, cancel=cn)
         except RuntimeError:
             raise
         except Exception as e:
