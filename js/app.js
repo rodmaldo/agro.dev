@@ -36,7 +36,7 @@
     if (stage === 'wizard' && cfg) return html`<${Wizard} key=${wkey} user=${user} field=${field} job=${job} S=${S.current} cfg=${cfg} setCfg=${setCfg} initStep=${job.base ? 1 : 0}
       onBack=${() => setStage('field')} onDone=${() => setStage('dash')} onLogout=${logout}/>`;
     if (stage === 'dash') return html`<${Dashboard} user=${user} field=${field} S=${S.current} cfg=${cfg} job=${job} onLogout=${logout} onHome=${() => setStage('home')}
-      onReconfig=${() => { if (confirm('Reconfigurar la grilla reinicia la detección y las capas. ¿Continuar?')) { setWkey(k => k + 1); setStage('wizard'); } }}/>`;
+      onReconfig=${() => { setWkey(k => k + 1); setStage('wizard'); }}/>`;
     return html`<${Splash} phase=${stage} onEnter=${enter}>
       ${stage === 'login' && html`<${Login} onOk=${r => { setUser(r.user); setStage('home'); }} onCancel=${() => setStage('splash')}/>`}
     <//>`;

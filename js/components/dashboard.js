@@ -104,6 +104,9 @@
   }
 
   root.AZUI.Dashboard = function Dashboard({ user, field, S, cfg, job, onLogout, onHome, onReconfig }) {
+    const [ask, confirmNode] = root.AZUI.useConfirm();
+    const goHome = () => ask('Volvés al inicio para cargar otro vuelo o terreno. Lo que no guardaste con Archivo → Guardar proyecto se pierde.', 'Ir al inicio', '¿Volver al inicio?').then(ok => { if (ok) onHome(); });
+    const reconfig = () => ask('Reconfigurar la grilla reinicia la detección y las capas.', 'Reconfigurar', '¿Reconfigurar la grilla?').then(ok => { if (ok) onReconfig(); });
     const [rev, bump] = useReducer(x => x + 1, 0);
     const [ui, setUi] = useState(() => ({ ...baseUi(), active: 'det', sel: ['det'], drag: null, menu: null, ctx: null, dockL: true, dockR: true, exportOpen: false, help: false, yld: 3000 }));
     const uiR = useRef(ui); uiR.current = ui;
@@ -178,7 +181,7 @@
     };
 
     const items = {
-      file: [{ t: 'Guardar proyecto', on: saveProject }, { t: 'Exportar prescripción / informe…', on: () => set({ exportOpen: true }) }, { sep: 1 }, { t: 'Reconfigurar grilla y puntos…', on: onReconfig }, { t: 'Cambiar de terreno', on: onHome }],
+      file: [{ t: 'Guardar proyecto', on: saveProject }, { t: 'Exportar prescripción / informe…', on: () => set({ exportOpen: true }) }, { sep: 1 }, { t: 'Reconfigurar grilla y puntos…', on: reconfig }, { t: 'Volver al inicio', on: goHome }],
       layers: [{ t: 'Combinar capas seleccionadas', on: combine, disabled: combinable.length < 2 }, { sep: 1 }, { t: 'Capa de histograma', on: addHist }, { t: 'Detección manual', on: addMan, disabled: !!S.man }, { t: 'Buffer', on: addBuf, disabled: M.buf.on }],
       view: [{ t: 'Imagen satelital', checked: ui.vis.sat, on: () => set({ vis: { ...ui.vis, sat: ui.vis.sat ? 0 : 1 } }) }, { t: 'Grilla', checked: ui.vis.grid, on: () => set({ vis: { ...ui.vis, grid: ui.vis.grid ? 0 : 1 } }), k: 'Espacio' },
         { t: 'Antes / después', checked: ui.ba, on: () => set({ ba: !ui.ba }), k: 'I' }, { t: 'Ajustar vista', on: () => mapApi.current.fit() }, { sep: 1 },
@@ -193,8 +196,9 @@
       wand: 'Clic: seleccionar zona · Ctrl+clic: sumar · clic derecho: borrar zona', poly: 'Clic para cada vértice · doble clic o primer vértice para cerrar', edit: 'Arrastrá vértices · tocá un borde para agregar · Shift+clic quita' }[ui.tool];
 
     return html`<div className="app">
+      ${confirmNode}
       <header className="top">
-        <div className="brand">agro<i>.dev</i></div><span className="crumb">${field.name}</span>
+        <div className="brand">agro<i>.dev</i></div><button className="btn sm" type="button" onClick=${goHome} title="Volver al inicio para cargar otro vuelo o terreno"><${Ic} n="back" s=${13}/> Inicio</button><span className="crumb">${field.name}</span>
         <${Menu} id="file" label="Archivo" open=${ui.menu} setOpen=${setMenu} items=${items.file}/>
         <${Menu} id="layers" label="Capas" open=${ui.menu} setOpen=${setMenu} items=${items.layers}/>
         <${Menu} id="view" label="Vista" open=${ui.menu} setOpen=${setMenu} items=${items.view}/>

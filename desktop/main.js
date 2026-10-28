@@ -49,6 +49,7 @@ function createWindow() {
   });
   const web = app.isPackaged ? path.join(__dirname, 'web', 'index.html') : (fs.existsSync(path.join(__dirname, 'web', 'index.html')) ? path.join(__dirname, 'web', 'index.html') : path.join(__dirname, '..', 'index.html'));
   win.loadFile(web);
+  win.on('focus', () => { try { win.webContents.focus(); } catch (e) { } });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
 }
 
@@ -77,8 +78,10 @@ ipcMain.handle('app:workdir', () => workdir());
 ipcMain.handle('app:logdir', () => logDir());
 ipcMain.handle('app:openlogs', () => shell.openPath(logDir()));
 ipcMain.handle('app:system', () => ({ platform: process.platform, arch: process.arch, cpus: os.cpus().length, cpuModel: (os.cpus()[0] || {}).model, ramGB: Math.round(os.totalmem() / 2 ** 30) }));
-ipcMain.handle('dialog:folders', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí una o varias carpetas del vuelo', properties: ['openDirectory', 'multiSelections'] }); return r.canceled ? [] : r.filePaths; });
-ipcMain.handle('dialog:files', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí archivos', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff'] }] }); return r.canceled ? [] : r.filePaths; });
+/* En Windows, tras un diálogo nativo la página puede quedar sin foco de teclado (los campos de texto no dejan escribir). Se lo devolvemos. */
+function refocus() { if (win && !win.isDestroyed()) { win.focus(); win.webContents.focus(); } }
+ipcMain.handle('dialog:folders', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí una o varias carpetas del vuelo', properties: ['openDirectory', 'multiSelections'] }); setTimeout(refocus, 50); return r.canceled ? [] : r.filePaths; });
+ipcMain.handle('dialog:files', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí archivos', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff'] }] }); setTimeout(refocus, 50); return r.canceled ? [] : r.filePaths; });
 ipcMain.handle('engine:call', (_e, id, cmd, args) => call(id, cmd, args));
 ipcMain.handle('engine:cancel', (_e, id) => call(--internalId, 'cancel', { target: id }));   // ids negativos: llamadas internas
 ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));

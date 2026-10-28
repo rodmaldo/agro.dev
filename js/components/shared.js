@@ -40,6 +40,18 @@
       <button type="button" disabled=${i >= cur || !onGo} onClick=${() => onGo && onGo(i)}><b>${i < cur ? '✓' : i + 1}</b><span>${s}</span></button></li>`)}</ol>`;
   };
 
+  /* Confirmación propia: confirm() nativo en Electron/Windows deja la ventana sin foco de teclado (no se puede escribir después) */
+  U.useConfirm = function () {
+    const [st, setSt] = useState(null);
+    const ask = (msg, ok, title) => new Promise(res => setSt({ msg, ok: ok || 'Continuar', title: title || 'Confirmar', res }));
+    const close = v => { if (st) st.res(v); setSt(null); };
+    useEffect(() => { if (!st) return; const f = e => { if (e.key === 'Escape') close(false); }; addEventListener('keydown', f); return () => removeEventListener('keydown', f); });
+    const node = st && html`<div className="veil" onClick=${e => { if (e.target === e.currentTarget) close(false); }}><div className="login" style=${{ width: 380 }} role="alertdialog" aria-modal="true" aria-label=${st.title}>
+      <h2>${st.title}</h2><div className="mu">${st.msg}</div>
+      <div className="row" style=${{ justifyContent: 'flex-end', gap: 10 }}><button className="btn" type="button" autoFocus onClick=${() => close(false)}>Cancelar</button><button className="btn pri" type="button" onClick=${() => close(true)}>${st.ok}</button></div></div></div>`;
+    return [ask, node];
+  };
+
   /* pie común: versión a la derecha, equipo a la izquierda */
   U.Foot = function Foot() {
     const [sp] = useState(() => AZSys.detect());

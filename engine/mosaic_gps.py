@@ -17,7 +17,8 @@ Image.MAX_IMAGE_PIXELS = None
 T = 512
 GSD_PER_M = 0.02685 / 100          # m/px por metro de altura (Mavic 3M, 5280 px de ancho)
 CROP = 0.04                        # margen descartado de cada borde (fracción del lado corto)
-FEATHER = 0.14                     # ancho de la zona de mezcla
+CENTER_POW = float(os.environ.get('AGRO_CENTER_POW') or 6)   # cuánto gana la foto más centrada (1 = promedio suave)
+FEATHER = 0.07                    # ancho de la zona de mezcla (angosta: con las fotos alineadas, mezclar menos = más nitidez)
 
 
 def m_per_deg(lat):
@@ -283,7 +284,8 @@ def render_band(args):
         dmin = np.minimum(np.minimum(xi, w_ - xi), np.minimum(yi, h_ - yi)) / min(w_, h_)
         wt = np.clip((dmin - CROP) / FEATHER, 0, 1)
         wt = wt * np.clip((0.93 - r) / 0.15, 0, 1)
-        wt = wt ** 3
+        # "el ganador se lleva casi todo": peso fuerte hacia el centro de cada foto (menos deformación y menos promedio de fotos desplazadas)
+        wt = wt * (np.clip(1.0 - r / 0.95, 0.0, 1.0) ** CENTER_POW) + 1e-6 * (wt > 0)
         wt[(xi < 0) | (xi >= w_) | (yi < 0) | (yi >= h_)] = 0
         sl = (slice(y0 - r0, y1 - r0), slice(c0, c1))
         acc[sl] += pix * wt[..., None]; wsum[sl] += wt
@@ -427,6 +429,23 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         raise RuntimeError('Hacen falta al menos 2 fotos con GPS')
     P.sort(key=lambda q: q['path'])
     fr = Frame(P)
+    # --- alineación por imagen: corrige posición y escala (altura) midiendo el contenido real de las fotos vecinas
+    al = {}
+    if os.environ.get('AGRO_ALIGN', '1') != '0' and len(P) >= 12:
+        ts = time.time()
+        def atick(i, n):
+            chk(); prog(0.0 + 0.02 * i / max(1, n), 'Alineando fotos entre sí · par %d/%d' % (i, n))
+        try:
+            import photo_align
+            al = photo_align.align(P, log=L, tick=atick, threads=max(1, min(6, (os.cpu_count() or 2) - 1)), cancel=lambda: bool(cancel and cancel()))
+        except RuntimeError:
+            raise
+        except Exception as e:
+            L('alineación: omitida por error (%s: %s); se usa el GPS tal cual' % (type(e).__name__, e))
+        finally:
+            try: photo_align.drop_thumbs()
+            except Exception: pass
+        tm['alineación'] = round(time.time() - ts, 1)
     g = res_m or float(np.median([q['g'] for q in P]))
     corners = [c for q in P for c in footprint(q, 1.0)]
     E0 = min(c[0] for c in corners); Emax = max(c[0] for c in corners)

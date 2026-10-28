@@ -12,6 +12,7 @@
   /* ---------- 1 · INICIO ---------- */
   root.AZUI.Home = function Home({ user, onOpen, onLogout }) {
     const [name, setName] = useState(''); const [list, setList] = useState(() => AZApi.fields.list()); const [err, setErr] = useState('');
+    const [ask, confirmNode] = root.AZUI.useConfirm();
     const create = e => {
       e.preventDefault(); const n = name.trim();
       if (n.length < 2) return setErr('Escribí un nombre para el terreno o proyecto');
@@ -35,9 +36,10 @@
           ${!list.length && html`<div className="mu">Todavía no creaste ninguno.</div>`}
           <ul className="flds">${list.slice().reverse().map(f => html`<li key=${f.id}>
             <button type="button" className="fopen" onClick=${() => onOpen(f)}><b>${f.name}</b><span className="mu">${new Date(f.created).toLocaleDateString('es-AR')}</span></button>
-            <button type="button" className="lnk" aria-label=${'Eliminar ' + f.name} onClick=${() => { if (confirm('¿Eliminar "' + f.name + '"?')) { AZApi.fields.remove(f.id); setList(AZApi.fields.list()); } }}><${Ic} n="trash" s=${14}/></button></li>`)}</ul>
+            <button type="button" className="lnk" aria-label=${'Eliminar ' + f.name} onClick=${() => ask('Se elimina el terreno "' + f.name + '" de la lista. Los archivos de las fotos no se borran.', 'Eliminar', '¿Eliminar terreno?').then(ok => { if (ok) { AZApi.fields.remove(f.id); setList(AZApi.fields.list()); } })}><${Ic} n="trash" s=${14}/></button></li>`)}</ul>
         </section>
       </main>
+      ${confirmNode}
       <${Foot}/></div>`;
   };
 
