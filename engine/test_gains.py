@@ -23,3 +23,13 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# --- tendencia suave de las ganancias (brillo que cambia según la posición / ángulo de visión) ---
+import mosaic_gps as _M
+_rng = np.random.default_rng(3)
+_pos = _rng.uniform(0, 2000, (400, 2))
+_true = 0.03 * _rng.standard_normal((400, 3))
+_lg = _true + (0.0004 * _pos[:, :1] - 0.0002 * _pos[:, 1:]) + 0.2 * ((_pos[:, :1] - 1000) / 1000) ** 2
+_out = _M.detrend_gains(_lg, _pos, [list(range(400))])
+assert np.abs(_out - _out.mean(0) - (_true - _true.mean(0))).max() < 0.03, 'detrend no deja solo el salto entre fotos'
+print('tendencia de ganancias: OK')

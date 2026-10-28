@@ -16,6 +16,7 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 T = 512
 GSD_PER_M = 0.02685 / 100          # m/px por metro de altura (Mavic 3M, 5280 px de ancho)
+RMAX = 0.88                        # radio útil de cada foto (1 = esquina): más afuera las esquinas oscuras de la lente se amplificaban y el borde del lote salía quemado
 CROP = 0.04                        # margen descartado de cada borde (fracción del lado corto)
 CENTER_POW = float(os.environ.get('AGRO_CENTER_POW') or 6)   # cuánto gana la foto más centrada (1 = promedio suave)
 FEATHER = 0.07                    # ancho de la zona de mezcla (angosta: con las fotos alineadas, mezclar menos = más nitidez)
@@ -154,7 +155,7 @@ def vignette_profile(photos, nb=48, tick=None):
     k = np.array([.25, .5, .25])
     for c in range(3):                                        # suavizado
         prof[:, c] = np.convolve(np.pad(prof[:, c], 1, mode='edge'), k, 'valid')
-    prof = np.clip(prof, 0.35, 1.5)
+    prof = np.clip(prof, 0.85, 1.25)                           # la corrección nunca amplifica más de ~18 %: lo demás sería ruido de las esquinas de la lente
     return (np.arange(nb) + .5) / nb, prof
 
 
@@ -163,7 +164,41 @@ def vignette_gain(r, prof, rbins):
     return np.stack([1.0 / np.interp(r, rbins, prof[:, c]) for c in range(3)], -1)
 
 
-def solve_gains(photos, frame, prof, rbins, g_out, tick=None):
+def _solve_small(A, b):
+    """Gauss con pivoteo para sistemas chicos (6×6), solo numpy: sin LAPACK."""
+    n = len(b); M_ = np.concatenate([A.astype(float), b.reshape(n, -1).astype(float)], 1)
+    for c in range(n):
+        p = c + int(np.argmax(np.abs(M_[c:, c]))); M_[[c, p]] = M_[[p, c]]
+        M_[c] /= M_[c, c] if abs(M_[c, c]) > 1e-18 else 1e-18
+        for r in range(n):
+            if r != c:
+                M_[r] -= M_[r, c] * M_[c]
+    return M_[:, n:]
+
+
+def detrend_gains(lg, pos, comps, log=None):
+    """Quita de log-ganancia la tendencia suave con la posición (plano + curvatura) en cada grupo de fotos conectado.
+    Por qué: el brillo de cada foto cambia de un lado al otro del cuadro (el rastrojo refleja distinto según el ángulo de visión). Al comparar
+    fotos vecinas eso parece un cambio de exposición, y al encadenar miles de fotos se acumula en un degradado enorme. La exposición real de la
+    cámara no cambia de forma suave en kilómetros: lo que queda (saltos entre fotos vecinas) sí se conserva."""
+    out = lg.copy(); info = []
+    for idx in comps:
+        if len(idx) < 12:
+            continue
+        idx = np.array(idx); xy = pos[idx]; c0 = xy.mean(0); sc = max(1.0, float(np.abs(xy - c0).max()))
+        x, y = (xy[:, 0] - c0[0]) / sc, (xy[:, 1] - c0[1]) / sc
+        F = np.stack([np.ones_like(x), x, y, x * x, x * y, y * y], 1)
+        A = F.T @ F + 1e-6 * len(idx) * np.diag([0, 1, 1, 1, 1, 1])
+        coef = _solve_small(A, F.T @ lg[idx])
+        trend = F @ coef; trend -= trend.mean(0)
+        out[idx] = lg[idx] - trend
+        info.append((len(idx), float(np.exp(trend.max()) - np.exp(trend.min()))))
+    if log and info:
+        log('exposición: tendencia suave quitada de las ganancias (%s)' % ' · '.join('%d fotos: %.0f %% de variación' % (n_, 100 * v) for n_, v in info))
+    return out
+
+
+def solve_gains(photos, frame, prof, rbins, g_out, tick=None, log=None):
     """Ganancias por foto y canal para que las superposiciones coincidan (mínimos cuadrados sobre log-ratios).
     tick(etapa, i, n) avisa el avance (para la barra de progreso y para saber que el motor sigue vivo)."""
     n = len(photos)
@@ -181,7 +216,7 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None):
     for i in range(n):
         d = np.hypot(pos[:, 0] - pos[i, 0], pos[:, 1] - pos[i, 1])
         lim = 0.8 * min(photos[i]['w'], photos[i]['h']) * photos[i]['g']
-        for j in np.argsort(d)[1:9]:                      # 8 vecinos más cercanos
+        for j in np.argsort(d)[1:15]:                     # 14 vecinos más cercanos (incluye las pasadas de al lado y de otros vuelos)
             if 1.0 < d[j] < lim:
                 pairs.add((min(i, int(j)), max(i, int(j))))
     for k_, (i, j) in enumerate(sorted(pairs)):
@@ -206,10 +241,14 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None):
             ok &= (np.hypot((cj + .5 - wj / 2) / (wj / 2), (rj + .5 - hj / 2) / (hj / 2)) < 0.8)
             if ok.sum() < 200:
                 continue
-            mi = ai[ok].mean(0); mj = aj[rj[ok], cj[ok]].mean(0)
+            vi_, vj_ = ai[ok], aj[rj[ok], cj[ok]]
+            good = (vi_.max(1) < 240) & (vj_.max(1) < 240) & (vi_.min(1) > 6) & (vj_.min(1) > 6)     # sin píxeles quemados ni negros
+            if good.sum() < 150:
+                continue
+            mi = vi_[good].mean(0); mj = vj_[good].mean(0)
             if (mi < 8).any() or (mj < 8).any():
                 continue
-            rows_i.append(i); rows_j.append(j); wts.append(math.sqrt(ok.sum()))
+            rows_i.append(i); rows_j.append(j); wts.append(math.sqrt(good.sum()))
             for c in range(3): vals[c].append(math.log(mj[c] / mi[c]))        # log g_i - log g_j = log(mj/mi)·(-1)… ver abajo
     if not rows_i:
         return np.ones((n, 3), np.float32)
@@ -226,7 +265,23 @@ def solve_gains(photos, frame, prof, rbins, g_out, tick=None):
     for c in range(3):
         wb = np.array(vals[c]) * w2
         B[:, c] = np.bincount(ri, wb, n) - np.bincount(rj, wb, n)
-    G[:] = np.exp(np.clip(_cg_laplacian(ri, rj, w2, B, n), -0.5, 0.5))
+    lg = _cg_laplacian(ri, rj, w2, B, n)
+    # diagnóstico: ¿el grafo de fotos está conectado? (si no, cada grupo queda normalizado por su cuenta y aparecen saltos de brillo entre vuelos)
+    par = list(range(n))
+    def fd(x):
+        while par[x] != x:
+            par[x] = par[par[x]]; x = par[x]
+        return x
+    for a_, b_ in zip(ri, rj):
+        par[fd(int(a_))] = fd(int(b_))
+    comp = {}
+    for i_ in range(n):
+        comp.setdefault(fd(i_), []).append(i_)
+    if os.environ.get('AGRO_GAIN_DETREND', '1') != '0':
+        lg = detrend_gains(lg, pos, list(comp.values()), log)
+    G[:] = np.exp(np.clip(lg, -0.9, 0.9))
+    solve_gains.diag = {'pares': m, 'componentes': len(comp), 'tam_componentes': sorted((len(v) for v in comp.values()), reverse=True)[:6],
+                        'rango': [float(G.min()), float(G.max())], 'saturadas': int((np.abs(lg) > 0.9).any(1).sum())}
     return G
 
 
@@ -287,7 +342,7 @@ def render_band(args):
         # peso: bordes (recorte + mezcla) y esquinas oscuras de la lente
         dmin = np.minimum(np.minimum(xi, w_ - xi), np.minimum(yi, h_ - yi)) / min(w_, h_)
         wt = np.clip((dmin - CROP) / FEATHER, 0, 1)
-        wt = wt * np.clip((0.93 - r) / 0.15, 0, 1)
+        wt = wt * np.clip((RMAX - r) / 0.06, 0, 1)
         # "el ganador se lleva casi todo": peso fuerte hacia el centro de cada foto (menos deformación y menos promedio de fotos desplazadas)
         wt = wt * (np.clip(1.0 - r / 0.95, 0.0, 1.0) ** CENTER_POW) + 1e-6 * (wt > 0)
         wt[(xi < 0) | (xi >= w_) | (yi < 0) | (yi >= h_)] = 0
@@ -396,7 +451,7 @@ def _rmap(p, E0, N1, g, c0, y0, nxc, nyc):
     xi = w / 2 + (cs * dE - sn * dN) / gi; yi = h / 2 - (sn * dE + cs * dN) / gi
     r = np.hypot((xi - w / 2) / (w / 2), (yi - h / 2) / (h / 2)) * (1 / math.sqrt(2))
     dmin = np.minimum(np.minimum(xi, w - xi), np.minimum(yi, h - yi)) / min(w, h)
-    ok = (dmin > CROP) & (r < 0.93)
+    ok = (dmin > CROP) & (r < RMAX)
     return r.astype(np.float32), ok
 
 
@@ -736,7 +791,11 @@ def build_mosaic(files, out_dir, res_m=None, quality=92, workers=None, progress=
         prog(0.08 + 0.04 * fr_, 'Igualando exposición entre fotos · ' + txt)
         if stage != 'resolver' and i and i % max(1, n // 4) == 0:
             L('exposición: %s' % txt)
-    gains = solve_gains(P, fr, prof, rb, g, tick=gtick)
+    gains = solve_gains(P, fr, prof, rb, g, tick=gtick, log=L)
+    try:
+        L('exposición: %s' % json.dumps(solve_gains.diag))
+    except Exception:
+        pass
     tm['exposición'] = round(time.time() - ts, 1); L('mosaico: exposición lista en %.1f s' % tm['exposición'])
 
     shutil.rmtree(os.path.join(out_dir, 'tiles'), ignore_errors=True); os.makedirs(os.path.join(out_dir, 'tiles'), exist_ok=True)
