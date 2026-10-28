@@ -21,15 +21,19 @@ jobs:
           pyinstaller --noconfirm --onedir --name agro_engine --collect-all rasterio --hidden-import mosaic_gps --distpath engine-build engine/agro_engine.py
           New-Item -ItemType Directory -Force desktop/engine-dist | Out-Null
           Copy-Item engine-build/agro_engine/* desktop/engine-dist -Recurse -Force
-      - name: Electron -> setup.exe + portable.exe
+      - name: Electron -> instalador (y publicación de la actualización si hay token)
         working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           # versión visible en el nombre del .exe y en el pie de la app: 0.4.<número de ejecución> (sube sola con cada build)
           npm version "0.4.${{ github.run_number }}" --no-git-tag-version --allow-same-version
           npm install
-          npm run dist
+          node scripts/copy-web.js
+          if ($env:GH_TOKEN) { npx electron-builder --win --x64 --publish always } else { Write-Host 'Sin RELEASES_TOKEN: se arma el instalador pero no se publica la actualización'; npx electron-builder --win --x64 --publish never }
       - uses: actions/upload-artifact@v4
         with:
           name: agro.dev-windows-v0.4.${{ github.run_number }}
           path: |
             desktop/release/*.exe
+            desktop/release/latest.yml

@@ -47,12 +47,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ]
     },
@@ -62,8 +56,16 @@
       "perMachine": false,
       "artifactName": "agro.dev-Setup-${version}.${ext}"
     },
-    "portable": {
-      "artifactName": "agro.dev-Portable-${version}.${ext}"
-    }
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "rodmaldo",
+        "repo": "agro.dev-releases",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   }
 }

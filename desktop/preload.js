@@ -21,6 +21,12 @@ contextBridge.exposeInMainWorld('agroDesktop', {
   reveal: p => ipcRenderer.invoke('shell:reveal', p),
   workdir: () => ipcRenderer.invoke('app:workdir'),
   onLog: cb => { logCbs.add(cb); return () => logCbs.delete(cb); },
+  updates: {
+    state: () => ipcRenderer.invoke('update:state'),
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onStatus: cb => { const f = (_e, st) => { try { cb(st); } catch (x) { } }; ipcRenderer.on('update:status', f); return () => ipcRenderer.removeListener('update:status', f); }
+  },
   logdir: () => ipcRenderer.invoke('app:logdir'),
   openLogs: () => ipcRenderer.invoke('app:openlogs')
 });

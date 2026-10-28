@@ -44,7 +44,14 @@
   U.Foot = function Foot() {
     const [sp] = useState(() => AZSys.detect());
     const [ver, setVer] = useState(AZSys.VERSION); const [showLog, setShowLog] = useState(false);
+    const [up, setUp] = useState({ state: 'idle' });
+    useEffect(() => {
+      const d = root.agroDesktop; if (!d || !d.updates) return;
+      let last = '';
+      const on = st => { setUp(st); const k = st.state + (st.version || '') + (st.state === 'error' ? st.msg : ''); if (k !== last && st.state !== 'checking' && root.AZDesktop) { last = k; root.AZDesktop.addLog({ none: 'estás en la última versión', downloading: 'descargando versión ' + st.version, ready: 'versión ' + st.version + ' lista: reiniciá para actualizar', error: 'no se pudo buscar actualizaciones (' + st.msg + ')' }[st.state] || st.state, 'Actualizador'); } };
+      d.updates.state().then(on, () => {}); return d.updates.onStatus(on);
+    }, []);
     useEffect(() => { const d = root.agroDesktop; if (d && d.version) d.version().then(v => v && setVer(v + ' · escritorio'), () => {}); }, []);
-    return html`<footer className="foot"><span className="specs" title="Especificaciones detectadas por el navegador (el nombre exacto del procesador no está disponible)">${sp.map(x => html`<span key=${x[0]}>${x[0]} <b>${x[1]}</b></span>`)}</span><span className="ver">${root.AZDesktop && root.AZDesktop.available && html`<button className="lnk" type="button" onClick=${() => setShowLog(true)}>Registro</button> · `}agro.dev v${ver}</span>${showLog && html`<${U.LogModal} onClose=${() => setShowLog(false)}/>`}</footer>`;
+    return html`<footer className="foot"><span className="specs" title="Especificaciones detectadas por el navegador (el nombre exacto del procesador no está disponible)">${sp.map(x => html`<span key=${x[0]}>${x[0]} <b>${x[1]}</b></span>`)}</span><span className="ver">${up.state === 'downloading' && html`<span className="upd">Descargando actualización ${up.version || ''} ${up.pct || 0} % · </span>`}${up.state === 'ready' && html`<button className="lnk upd" type="button" onClick=${() => root.agroDesktop.updates.install()} title="Cierra la app, instala la versión nueva y la vuelve a abrir">Actualizar a v${up.version} (reiniciar)</button> · `}${root.AZDesktop && root.AZDesktop.available && html`<button className="lnk" type="button" onClick=${() => setShowLog(true)}>Registro</button> · `}agro.dev v${ver}</span>${showLog && html`<${U.LogModal} onClose=${() => setShowLog(false)}/>`}</footer>`;
   };
 })(window);

@@ -52,6 +52,26 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
 }
 
+/* ---- actualizaciones automáticas (electron-updater + GitHub Releases) ---- */
+let autoUpdater = null, lastUpdate = { state: 'idle' };
+function sendUpdate(st) { lastUpdate = st; if (win && !win.isDestroyed()) win.webContents.send('update:status', st); }
+function checkUpdates() { if (autoUpdater) autoUpdater.checkForUpdates().catch(e => sendUpdate({ state: 'error', msg: String(e && e.message || e).split('\n')[0] })); }
+function setupUpdates() {
+  if (!app.isPackaged) return;                                   // solo en la app instalada
+  try { ({ autoUpdater } = require('electron-updater')); } catch (e) { return; }
+  autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true; autoUpdater.logger = null;
+  autoUpdater.on('checking-for-update', () => sendUpdate({ state: 'checking' }));
+  autoUpdater.on('update-available', i => sendUpdate({ state: 'downloading', version: i.version, pct: 0 }));
+  autoUpdater.on('update-not-available', () => sendUpdate({ state: 'none' }));
+  autoUpdater.on('download-progress', p => sendUpdate({ state: 'downloading', version: (lastUpdate && lastUpdate.version) || '', pct: Math.round(p.percent) }));
+  autoUpdater.on('update-downloaded', i => sendUpdate({ state: 'ready', version: i.version }));
+  autoUpdater.on('error', e => sendUpdate({ state: 'error', msg: String(e && e.message || e).split('\n')[0] }));
+  setTimeout(checkUpdates, 8000); setInterval(checkUpdates, 4 * 3600 * 1000);
+}
+ipcMain.handle('update:state', () => lastUpdate);
+ipcMain.handle('update:check', () => { checkUpdates(); });
+ipcMain.handle('update:install', () => { if (autoUpdater && lastUpdate.state === 'ready') autoUpdater.quitAndInstall(false, true); });
+
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:workdir', () => workdir());
 ipcMain.handle('app:logdir', () => logDir());
@@ -66,6 +86,6 @@ ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));
 const lock = app.requestSingleInstanceLock();
 if (!lock) app.quit(); else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.whenReady().then(() => { createWindow(); startEngine(); });
+  app.whenReady().then(() => { createWindow(); startEngine(); setupUpdates(); });
   app.on('window-all-closed', () => { if (engine) engine.kill(); app.quit(); });
 }

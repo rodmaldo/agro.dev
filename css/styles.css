@@ -261,3 +261,5 @@ input[type=range]:hover::-webkit-slider-thumb,input[type=range]:active::-webkit-
 .lrow2[draggable=true]{cursor:grab}
 .lrow2 .grip{width:12px;flex:none;color:var(--mu);font-size:11px;letter-spacing:-2px;user-select:none;text-align:center}
 .lhint{padding:4px 10px;font-size:10.5px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-top:1px solid var(--ln)}
+
+.upd{color:var(--ac)}
