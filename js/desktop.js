@@ -36,10 +36,16 @@
     };
   };
 
+  /* Cuánto de la PC le deja el usuario al procesado (30-80 %; hasta 90 % solo con "rendimiento avanzado"). No cambia la calidad: solo la velocidad y el calor. */
+  D.perf = {
+    get() { try { const v = JSON.parse(localStorage.getItem('agro.perf') || '{}'); const adv = !!v.adv; return { adv, pct: Math.min(adv ? 90 : 80, Math.max(30, +v.pct || 80)) }; } catch (e) { return { adv: false, pct: 80 }; } },
+    set(v) { try { localStorage.setItem('agro.perf', JSON.stringify({ adv: !!v.adv, pct: Math.min(v.adv ? 90 : 80, Math.max(30, +v.pct || 80)) })); } catch (e) { } }
+  };
+
   /* Arma el ortomosaico a resolución original (por mosaicos) y lo deja abierto. o: {files, outRes (cm/px o null), rtk} */
   D.buildBase = async function (o, onProgress, cancel) {
     const out = (await api().workdir()) + '/' + 'ortomosaicos/' + o.name.replace(/[^\w\-]+/g, '_') + '_' + Date.now();
-    const meta = await D.call('mosaic', { files: o.files, out, res_cm: o.outRes || null, quality: 92 }, (p, m) => onProgress && onProgress(p * 0.9, m), cancel);
+    const meta = await D.call('mosaic', { files: o.files, out, res_cm: o.outRes || null, quality: 92, resources: D.perf.get().pct }, (p, m) => onProgress && onProgress(p * 0.9, m), cancel);
     const timing = { start: Math.round(meta.started * 1000), end: Math.round(meta.finished * 1000), seconds: meta.seconds, log: meta.log, fallback: !!meta.single_process_fallback, workers: meta.workers, stages: meta.timings };
     onProgress && onProgress(0.92, 'Abriendo ortomosaico…');
     const T = await D.call('open_tiles', { dir: meta.dir });

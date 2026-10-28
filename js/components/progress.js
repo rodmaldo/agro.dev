@@ -58,5 +58,22 @@
         ${showLog && html`<${root.AZUI.LogPanel} rows=${8}/>`}</div>`}
       <button className="btn" type="button" onClick=${onCancel}>Cancelar</button></div></div>`;
   };
+  /* ---- Rendimiento: cuánto de la PC usa el procesado ---- */
+  root.AZUI.PerfModal = function PerfModal({ onClose }) {
+    const D = root.AZDesktop, [v, setV] = useState(() => D.perf.get()), [sys, setSys] = useState(null);
+    useEffect(() => { const a = root.agroDesktop; if (a && a.system) a.system().then(setSys).catch(() => { }); }, []);
+    const max = v.adv ? 90 : 80, pct = Math.min(max, v.pct);
+    const upd = n => { setV(n); D.perf.set(n); };
+    const thr = sys ? Math.max(1, Math.round(sys.cpus * pct / 100)) : null;
+    return html`<div className="veil" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}><div className="login pdlg" role="dialog" aria-label="Rendimiento">
+      <h2>Rendimiento</h2>
+      <p className="mu">Cuánto de tu computadora puede usar agro.dev al procesar un vuelo. <b>No cambia la calidad de las imágenes</b>: usar más recursos solo lo hace terminar antes (y calienta más la PC).</p>
+      <label className="perf-l" htmlFor="perf-r">Uso de recursos: <b>${pct} %</b>${thr ? html` <span className="mu">· ${thr} de ${sys.cpus} hilos del procesador</span>` : ''}</label>
+      <input id="perf-r" type="range" min="30" max=${max} step="5" value=${pct} onInput=${e => upd({ ...v, pct: +e.target.value })} style=${{ width: '100%' }}/>
+      <div className="row" style=${{ justifyContent: 'space-between' }}><span className="mu">30 % (suave)</span><span className="mu">${max} %${v.adv ? '' : ' (recomendado)'}</span></div>
+      <label className="perf-adv"><input type="checkbox" checked=${v.adv} onChange=${e => upd({ adv: e.target.checked, pct: e.target.checked ? pct : Math.min(80, pct) })}/> Rendimiento avanzado (permite hasta 90 %)</label>
+      ${v.adv && html`<div className="note w">Con 90 % la PC trabaja al límite: más temperatura y ventiladores al máximo, y el resto de programas puede ir más lento. Usalo solo con buena ventilación.</div>`}
+      <button className="btn" type="button" onClick=${onClose}>Listo</button></div></div>`;
+  };
   root.AZUI.fmtDur = fmtDur; root.AZUI.fmtClock = fmtClock;
 })(window);

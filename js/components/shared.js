@@ -55,7 +55,7 @@
   /* pie común: versión a la derecha, equipo a la izquierda */
   U.Foot = function Foot() {
     const [sp] = useState(() => AZSys.detect());
-    const [ver, setVer] = useState(AZSys.VERSION); const [showLog, setShowLog] = useState(false);
+    const [ver, setVer] = useState(AZSys.VERSION); const [showLog, setShowLog] = useState(false); const [showPerf, setShowPerf] = useState(false);
     const [up, setUp] = useState({ state: 'idle' });
     useEffect(() => {
       const d = root.agroDesktop; if (!d || !d.updates) return;
@@ -64,6 +64,6 @@
       d.updates.state().then(on, () => {}); return d.updates.onStatus(on);
     }, []);
     useEffect(() => { const d = root.agroDesktop; if (d && d.version) d.version().then(v => v && setVer(v + ' · escritorio'), () => {}); }, []);
-    return html`<footer className="foot"><span className="specs" title="Especificaciones detectadas por el navegador (el nombre exacto del procesador no está disponible)">${sp.map(x => html`<span key=${x[0]}>${x[0]} <b>${x[1]}</b></span>`)}</span><span className="ver">${up.state === 'downloading' && html`<span className="upd">Descargando actualización ${up.version || ''} ${up.pct || 0} % · </span>`}${up.state === 'ready' && html`<button className="lnk upd" type="button" onClick=${() => root.agroDesktop.updates.install()} title="Cierra la app, instala la versión nueva y la vuelve a abrir">Actualizar a v${up.version} (reiniciar)</button> · `}${root.AZDesktop && root.AZDesktop.available && html`<button className="lnk" type="button" onClick=${() => setShowLog(true)}>Registro</button> · `}agro.dev v${ver}</span>${showLog && html`<${U.LogModal} onClose=${() => setShowLog(false)}/>`}</footer>`;
+    return html`<footer className="foot"><span className="specs" title="Especificaciones detectadas por el navegador (el nombre exacto del procesador no está disponible)">${sp.map(x => html`<span key=${x[0]}>${x[0]} <b>${x[1]}</b></span>`)}</span><span className="ver">${up.state === 'downloading' && html`<span className="upd">Descargando actualización ${up.version || ''} ${up.pct || 0} % · </span>`}${up.state === 'ready' && html`<button className="lnk upd" type="button" onClick=${() => root.agroDesktop.updates.install()} title="Cierra la app, instala la versión nueva y la vuelve a abrir">Actualizar a v${up.version} (reiniciar)</button> · `}${root.AZDesktop && root.AZDesktop.available && html`<button className="lnk" type="button" onClick=${() => setShowPerf(true)} title="Cuánto de tu PC usa el procesado (no cambia la calidad)">Rendimiento</button> · <button className="lnk" type="button" onClick=${() => setShowLog(true)}>Registro</button> · `}agro.dev v${ver}</span>${showLog && html`<${U.LogModal} onClose=${() => setShowLog(false)}/>`}${showPerf && html`<${U.PerfModal} onClose=${() => setShowPerf(false)}/>`}</footer>`;
   };
 })(window);

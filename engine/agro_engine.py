@@ -507,7 +507,7 @@ def cmd_mosaic(args, job):
     t0 = time.time()
     log('mosaico: inicio · %d fotos · salida %s · res_cm=%s · cpus=%s' % (len(files), out, args.get('res_cm'), os.cpu_count()))
     try:
-        meta = mosaic_gps.build_mosaic(files, out, res_m=res, quality=int(args.get('quality', 92)), workers=args.get('workers'),
+        meta = mosaic_gps.build_mosaic(files, out, res_m=res, quality=int(args.get('quality', 92)), workers=args.get('workers'), resources=args.get('resources'),
                                        progress=job.progress, cancel=job.cancel.is_set, log=log)
     except Exception as e:
         import traceback

@@ -40,3 +40,7 @@ Las versiones se publican en un repositorio de releases **público** (`rodmaldo/
 Desde ahí, cada push a `main` genera la versión `0.4.<n.º de ejecución>`, la publica en el repo de releases y las apps instaladas la reciben. Sin el secreto, el build igual arma el instalador pero no publica.
 
 La versión se ve en el nombre del archivo (`agro.dev-Setup-0.4.N.exe`), en el pie de la app y en `motor.log`.
+
+## Rendimiento
+
+Configuración → pie de la app → **Rendimiento**: uso de recursos del procesado (30–80 %, 80 % por defecto; hasta 90 % con "Rendimiento avanzado"). No cambia la calidad, solo la velocidad. Variable de entorno equivalente: `AGRO_RENDER=bandas` vuelve al armado antiguo por franjas; `AGRO_RESOURCE_PCT` fija el porcentaje.

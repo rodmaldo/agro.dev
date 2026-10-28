@@ -263,3 +263,5 @@ input[type=range]:hover::-webkit-slider-thumb,input[type=range]:active::-webkit-
 .lhint{padding:4px 10px;font-size:10.5px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-top:1px solid var(--ln)}
 
 .upd{color:var(--ac)}
+.perf-l{display:block;margin:12px 0 6px}
+.perf-adv{display:flex;gap:8px;align-items:center;margin:12px 0}
