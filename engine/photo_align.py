@@ -162,19 +162,37 @@ def solve_offsets(n, pairs, meas, iters=4, tol_m=0.8):
     return o, res, wr
 
 
-def fit_scale(P, o, groups):
-    """Escala por vuelo: o_i ≈ k·(p_i - p̄) (+ ruido). Devuelve {grupo: k}. g_verdadera = g·(1-k)."""
-    ks = {}
+def fit_similarity(P, o, groups):
+    """Por vuelo: o_i ≈ k·x_i + d·J·x_i (x = posición menos el centro, J = giro de 90°). k = error de escala de la altura, d = error de rumbo (rad)."""
+    out = {}
     for gname, idx in groups.items():
         if len(idx) < 12:
             continue
         pe = np.array([P[i]['e'] for i in idx]); pn = np.array([P[i]['n'] for i in idx])
         xe, xn = pe - pe.mean(), pn - pn.mean()
-        oe, on = o[idx, 0] - o[idx, 0].mean(), o[idx, 1] - o[idx, 1].mean()
-        den = (xe * xe + xn * xn).sum()
-        if den > 1e-6:
-            ks[gname] = float((xe * oe + xn * on).sum() / den)
-    return ks
+        A = np.zeros((2 * len(idx), 2)); y = np.zeros(2 * len(idx))
+        A[:len(idx), 0] = xe; A[:len(idx), 1] = -xn; y[:len(idx)] = o[idx, 0] - o[idx, 0].mean()
+        A[len(idx):, 0] = xn; A[len(idx):, 1] = xe; y[len(idx):] = o[idx, 1] - o[idx, 1].mean()
+        den = np.linalg.det(A.T @ A) if False else None
+        ata = A.T @ A
+        if ata[0, 0] * ata[1, 1] - ata[0, 1] ** 2 < 1e-6:
+            continue
+        k, d = np.linalg.solve(ata, A.T @ y)
+        out[gname] = (float(k), float(d), float(pe.mean()), float(pn.mean()))
+    return out
+
+
+def _resid(P, pairs, idxs):
+    r = []
+    for k in idxs:
+        i, j = pairs[k]
+        try:
+            m = measure_pair(P[i], P[j])
+        except Exception:
+            m = None
+        if m is not None and m[2] >= 0.08 and m[3] >= 1.5:
+            r.append(math.hypot(m[0], m[1]))
+    return float(np.median(r)) if len(r) >= 6 else None
 
 
 def align(P, log=None, tick=None, threads=4, cancel=None):
@@ -221,25 +239,51 @@ def align(P, log=None, tick=None, threads=4, cancel=None):
     o, res, wr = solve_offsets(n, pg, ms)
     raw = np.hypot(*np.array([[m[0], m[1]] for m in ms]).T)
     stats['before_m'] = float(np.median(raw)); stats['after_m'] = float(np.median(res[wr > 0])) if (wr > 0).any() else None
-    # escala por vuelo (carpeta)
+    # escala y rumbo por vuelo (carpeta): la parte lineal de o. El signo del giro se decide midiendo de nuevo.
     groups = {}
     for i, p in enumerate(P):
         groups.setdefault(os.path.dirname(p['path']), []).append(i)
-    ks = fit_scale(P, o, groups)
-    for gname, kk in ks.items():
-        idx = groups[gname]
-        pe = np.mean([P[i]['e'] for i in idx]); pn = np.mean([P[i]['n'] for i in idx])
-        for i in idx:                                          # la parte lineal de o es el error de escala: se aplica como GSD y se resta de o
-            o[i, 0] -= kk * (P[i]['e'] - pe); o[i, 1] -= kk * (P[i]['n'] - pn)
-            P[i]['g'] *= (1.0 - kk)
-        L('alineación: vuelo %s · error de escala de la altura %.1f %% (%d fotos)' % (os.path.basename(gname) or gname, kk * 100, len(idx)))
-    stats['k'] = {os.path.basename(g_) or g_: float(v) for g_, v in ks.items()}
-    # corrección de posición, limitada a lo razonable (6 m)
-    mv = np.hypot(o[:, 0], o[:, 1])
-    big = mv > 6.0
-    o[big] *= (6.0 / mv[big])[:, None]
-    for i, p in enumerate(P):
-        p['e'] += float(o[i, 0]); p['n'] += float(o[i, 1])
+    fit = fit_similarity(P, o, groups)
+    sample = [k for k, _ in good][::max(1, len(good) // 40)]
+    base = [(p['e'], p['n'], p['g'], p['yaw']) for p in P]
+    best = None
+    for sgn in (1, -1):
+        for i, p in enumerate(P):
+            p['e'], p['n'], p['g'], p['yaw'] = base[i]
+        oo = o.copy()
+        for gname, (kk, dd, pe, pn) in fit.items():
+            for i in groups[gname]:
+                xe, xn = P[i]['e'] - pe, P[i]['n'] - pn
+                oo[i, 0] -= kk * xe - dd * xn; oo[i, 1] -= kk * xn + dd * xe
+                P[i]['g'] = base[i][2] * (1.0 - kk); P[i]['yaw'] = base[i][3] + sgn * math.degrees(dd)
+        for i, p in enumerate(P):
+            p['e'] = base[i][0] + float(oo[i, 0]); p['n'] = base[i][1] + float(oo[i, 1])
+        drop_thumbs_cache = None
+        r_ = _resid(P, pairs, sample)
+        L('alineación: prueba de giro %+d -> desfase %s' % (sgn, ('%.2f m' % r_) if r_ is not None else 's/d'))
+        if r_ is not None and (best is None or r_ < best[0]):
+            best = (r_, sgn, oo.copy())
+    if best is None or not fit:
+        for i, p in enumerate(P):
+            p['e'], p['n'], p['g'], p['yaw'] = base[i]
+        oo = o.copy()
+        for i, p in enumerate(P):
+            p['e'] += float(oo[i, 0]); p['n'] += float(oo[i, 1])
+    else:
+        _, sgn, oo = best
+        for i, p in enumerate(P):
+            p['e'], p['n'], p['g'], p['yaw'] = base[i]
+        for gname, (kk, dd, pe, pn) in fit.items():
+            for i in groups[gname]:
+                P[i]['g'] = base[i][2] * (1.0 - kk); P[i]['yaw'] = base[i][3] + sgn * math.degrees(dd)
+        for i, p in enumerate(P):
+            p['e'] = base[i][0] + float(oo[i, 0]); p['n'] = base[i][1] + float(oo[i, 1])
+    for gname, (kk, dd, pe, pn) in fit.items():
+        L('alineación: vuelo %s · escala de la altura %+.1f %% · rumbo %+.2f° (%d fotos)' % (os.path.basename(gname) or gname, kk * 100, math.degrees(dd), len(groups[gname])))
+    stats['k'] = {os.path.basename(g_) or g_: [v[0], v[1]] for g_, v in fit.items()}
+    oo = oo if best is not None else o
+    mv = np.hypot(oo[:, 0], oo[:, 1])
+    o = oo
     stats['moved_m'] = float(np.median(np.hypot(o[:, 0], o[:, 1])))
     L('alineación: desfase mediano entre vecinas %.2f m -> %s · corrección de posición mediana %.2f m · %.1f s'
       % (stats['before_m'], ('%.2f m' % stats['after_m']) if stats['after_m'] is not None else 's/d', stats['moved_m'], time.time() - t0))

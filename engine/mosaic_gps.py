@@ -52,6 +52,10 @@ def parse_photo(path):
             alt = r(gps[6]) if gps.get(6) is not None else None
         gy, fy = num('GimbalYawDegree'), num('FlightYawDegree')
         yaw = gy if gy is not None else (fy if fy is not None else 0.0)
+        # Con el gimbal casi vertical el DJI a veces reporta yaw+180° con roll=±180° (misma orientación real): sin esto esas fotos se pegan giradas 180°
+        groll = num('GimbalRollDegree')
+        if gy is not None and groll is not None and abs(groll) > 90:
+            yaw += 180.0
         foc = num('CalibratedFocalLength')
         rtk = num('RtkFlag')
         return {'path': path, 'model': str(ex.get(0x0110, '')).strip(), 'lat': lat, 'lon': lon, 'alt': alt, 'yaw': yaw, 'w': w, 'h': h, 'rtk': rtk,
