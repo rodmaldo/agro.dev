@@ -86,6 +86,20 @@
     </div>`;
   }
 
+  /* Biblioteca de ejemplos: cuánto material tiene guardado el sistema para aprender (todavía no entrena nada) */
+  function LearnBox({ rev }) {
+    const [sum, setSum] = useState(null), L = root.AZLearn;
+    useEffect(() => { if (!L || !L.available()) return; let dead = false; const h = setTimeout(() => L.summary().then(s => { if (!dead) setSum(s); }), 4500); return () => { dead = true; clearTimeout(h); }; }, [rev]);
+    if (!L || !L.available()) return null;
+    const t = (sum || []).reduce((a, x) => ({ pos: a.pos + x.n.pos, neg: a.neg + x.n.neg, user: a.user + x.n.user }), { pos: 0, neg: 0, user: 0 }), nl = (sum || []).length;
+    return html`<div className="stat"><div className="k">Aprendizaje · ejemplos guardados</div>
+      <div className="kv"><span>Lotes con ejemplos</span><span>${sum ? nl : '…'}</span></div>
+      <div className="kv"><span>Celdas de salitre</span><span>${sum ? t.pos.toLocaleString('es-AR') : '…'}</span></div>
+      <div className="kv"><span>Celdas sanas</span><span>${sum ? t.neg.toLocaleString('es-AR') : '…'}</span></div>
+      <div className="kv"><span>Marcadas o corregidas por vos</span><span>${sum ? t.user.toLocaleString('es-AR') : '…'}</span></div>
+      <div className="mu">Por ahora solo se juntan ejemplos: la detección todavía <b>no aprende</b>. Con 3 lotes o más bien delimitados se puede entrenar y medir el acierto.</div></div>`;
+  }
+
   function Legend({ S }) {
     const [c, setC] = useState(null);
     useEffect(() => { const f = e => setC(e.detail); addEventListener('az-cursor', f); return () => removeEventListener('az-cursor', f); }, []);
@@ -331,6 +345,7 @@
                 ${M.buf.on && html`<div className="kv"><span>Búfer ${f1(M.buf.m, 1)} m</span><span>${f1(st.buf)} ha</span></div>`}</div>
               <div className="stat"><label className="fld"><span className="fl">Rinde potencial (kg/ha)</span><input type="number" min="0" step="100" value=${ui.yld} onInput=${e => set({ yld: e.target.value })}/></label>
                 <div className="kv"><span>Pérdida estimada</span><span>${f1(st.inf * (+ui.yld || 0) / 1000)} t</span></div></div>
+              <${LearnBox} rev=${rev}/>
               <div className="row"><button className="btn pri sm" type="button" onClick=${() => set({ exportOpen: true })}>Exportar…</button><button className="btn sm" type="button" onClick=${saveProject}>Guardar proyecto</button></div>`}
             ${ui.tabA === 'vista' && html`<div className="pb">
               <${Slider} label="Opacidad ortomosaico" min=${10} max=${100} value=${ui.orthOp} unit=" %" onChange=${v => set({ orthOp: v })}/>

@@ -117,6 +117,14 @@ ipcMain.handle('lot:load', (_e, id) => {
 });
 ipcMain.handle('lot:has', (_e, id) => { try { return fs.existsSync(path.join(lotDir(id), 'estado.json')); } catch (e) { return false; } });
 ipcMain.handle('lot:remove', (_e, id) => { try { fs.rmSync(lotDir(id), { recursive: true, force: true }); } catch (e) { } return true; });
+/* Biblioteca de ejemplos para el aprendizaje: Documentos/agro.dev/ejemplos/<lote>.json (un archivo por lote; se reemplaza al volver a guardar) */
+function exDir() { const d = path.join(workdir(), 'ejemplos'); fs.mkdirSync(d, { recursive: true }); return d; }
+ipcMain.handle('ex:save', (_e, id, json) => { if (!/^[\w\-]{1,64}$/.test(String(id))) throw new Error('id de lote inválido'); atomicWrite(path.join(exDir(), id + '.json'), json); return true; });
+ipcMain.handle('ex:summary', () => {
+  const out = [];
+  for (const f of fs.readdirSync(exDir())) { if (!/\.json$/.test(f)) continue; try { const j = JSON.parse(fs.readFileSync(path.join(exDir(), f), 'utf8')); out.push({ id: j.lotId, name: j.name, savedAt: j.savedAt, n: j.n, cellM: j.cellM, lotHa: j.lotHa, infPct: j.infPct, feat: j.feat }); } catch (e) { } }
+  return out;
+});
 ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));
 
 const lock = app.requestSingleInstanceLock();

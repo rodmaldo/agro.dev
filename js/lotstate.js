@@ -56,6 +56,7 @@
         const fresh = S.cellsBuf && S.cellsBuf !== S._cellsWritten, cells = fresh ? new Uint8Array(S.cellsBuf) : null;     // las celdas solo se reescriben si se recalcularon (pueden pesar decenas de MB)
         await root.agroDesktop.lots.save(ctx.field.id, JSON.stringify(snap), cells);
         if (fresh) S._cellsWritten = S.cellsBuf;
+        if (root.AZLearn) root.AZLearn.record(S, { id: ctx.field.id, name: ctx.field.name, cfg: ctx.cfg, version: ctx.version });   // biblioteca de ejemplos (no bloquea el guardado)
         try { root.AZApi.fields.update(ctx.field.id, { saved: snap.savedAt, stage: snap.stage }); } catch (e) { }
         return true;
       } catch (e) { if (root.AZDesktop) root.AZDesktop.addLog('no se pudo guardar el lote: ' + e.message, 'Interfaz'); return false; }
