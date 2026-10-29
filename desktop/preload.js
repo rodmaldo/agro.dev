@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('agroDesktop', {
   savePdf: (html, name) => ipcRenderer.invoke('report:pdf', html, name),
   reveal: p => ipcRenderer.invoke('shell:reveal', p),
   workdir: () => ipcRenderer.invoke('app:workdir'),
+  lots: { save: (id, json, cells) => ipcRenderer.invoke('lot:save', id, json, cells), load: id => ipcRenderer.invoke('lot:load', id), has: id => ipcRenderer.invoke('lot:has', id), remove: id => ipcRenderer.invoke('lot:remove', id) },
   onLog: cb => { logCbs.add(cb); return () => logCbs.delete(cb); },
   updates: {
     state: () => ipcRenderer.invoke('update:state'),

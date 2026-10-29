@@ -101,6 +101,22 @@ ipcMain.handle('report:pdf', async (_e, htmlText, name) => {
     return { path: r.filePath };
   } finally { w.destroy(); try { fs.unlinkSync(tmp); } catch (e) { } }
 });
+/* Lotes guardados: <Documentos>/agro.dev/lotes/<id>/estado.json (+ celdas.bin). Se escribe en un archivo temporal y se renombra, así un corte a mitad de guardado no deja un lote roto. */
+function lotDir(id) { if (!/^[\w\-]{1,64}$/.test(String(id))) throw new Error('id de lote inválido'); const d = path.join(workdir(), 'lotes', String(id)); fs.mkdirSync(d, { recursive: true }); return d; }
+function atomicWrite(file, data) { const t = file + '.tmp'; fs.writeFileSync(t, data); fs.renameSync(t, file); }
+ipcMain.handle('lot:save', (_e, id, json, cells) => {
+  const d = lotDir(id);
+  if (cells && cells.byteLength) atomicWrite(path.join(d, 'celdas.bin'), Buffer.from(cells.buffer ? new Uint8Array(cells.buffer, cells.byteOffset, cells.byteLength) : new Uint8Array(cells)));
+  atomicWrite(path.join(d, 'estado.json'), json);       // al final: el estado solo existe si las celdas ya están completas
+  return { dir: d };
+});
+ipcMain.handle('lot:load', (_e, id) => {
+  const d = lotDir(id), j = path.join(d, 'estado.json'); if (!fs.existsSync(j)) return null;
+  const c = path.join(d, 'celdas.bin'), cb = fs.existsSync(c) ? fs.readFileSync(c) : null;
+  return { json: fs.readFileSync(j, 'utf8'), cells: cb ? new Uint8Array(cb.buffer, cb.byteOffset, cb.byteLength) : null };
+});
+ipcMain.handle('lot:has', (_e, id) => { try { return fs.existsSync(path.join(lotDir(id), 'estado.json')); } catch (e) { return false; } });
+ipcMain.handle('lot:remove', (_e, id) => { try { fs.rmSync(lotDir(id), { recursive: true, force: true }); } catch (e) { } return true; });
 ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));
 
 const lock = app.requestSingleInstanceLock();

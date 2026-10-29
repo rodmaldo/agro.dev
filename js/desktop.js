@@ -48,14 +48,18 @@
     const meta = await D.call('mosaic', { files: o.files, out, res_cm: o.outRes || null, quality: 92, resources: D.perf.get().pct }, (p, m) => onProgress && onProgress(p * 0.9, m), cancel);
     const timing = { start: Math.round(meta.started * 1000), end: Math.round(meta.finished * 1000), seconds: meta.seconds, log: meta.log, fallback: !!meta.single_process_fallback, workers: meta.workers, stages: meta.timings };
     onProgress && onProgress(0.92, 'Abriendo ortomosaico…');
-    const T = await D.call('open_tiles', { dir: meta.dir });
-    const g = T.mpp, k = AZ.mPerDeg(T.lat0);
-    const cE = T.E0 + T.w * g / 2, cN = T.N1 - T.h * g / 2;
+    const base = await D.openBase(meta.dir, o.rtk); base.timing = timing; return base;
+  };
+
+  /* Abre (o reabre) un ortomosaico ya generado en disco: solo levanta el servidor de mosaicos, no procesa nada. Es lo que permite abrir un lote guardado al instante. */
+  D.openBase = async function (dir, rtk) {
+    const T = await D.call('open_tiles', { dir });
+    const g = T.mpp, cE = T.E0 + T.w * g / 2, cN = T.N1 - T.h * g / 2;
     const mppV = Math.max(g, Math.min(g * 8, 0.25));
     return {
-      tiled: { url: T.url, server: T.server, levels: T.levels, tile: T.tile, w0: T.w, h0: T.h, g, mppV, dir: meta.dir, photos: T.photos, seconds: T.seconds },
-      polyNative: T.poly_px, mpp: mppV, geo: (T.exact ? { ...AZ.enuToGeo(T.lat0, T.lon0, cE, cN), lat0: T.lat0, lon0: T.lon0, cE, cN, exact: true, rtk: o.rtk } : { lat: T.lat0 + cN / T.ky, lon: T.lon0 + cE / T.kx, rtk: o.rtk }),
-      note: T.photos + ' fotos · ' + (g * 100).toFixed(1) + ' cm/px · ' + T.w.toLocaleString('es-AR') + '×' + T.h.toLocaleString('es-AR') + ' px · ' + T.seconds + ' s', canvas: null, timing
+      tiled: { url: T.url, server: T.server, levels: T.levels, tile: T.tile, w0: T.w, h0: T.h, g, mppV, dir, photos: T.photos, seconds: T.seconds },
+      polyNative: T.poly_px, mpp: mppV, geo: (T.exact ? { ...AZ.enuToGeo(T.lat0, T.lon0, cE, cN), lat0: T.lat0, lon0: T.lon0, cE, cN, exact: true, rtk } : { lat: T.lat0 + cN / T.ky, lon: T.lon0 + cE / T.kx, rtk }),
+      note: T.photos + ' fotos · ' + (g * 100).toFixed(1) + ' cm/px · ' + T.w.toLocaleString('es-AR') + '×' + T.h.toLocaleString('es-AR') + ' px · ' + T.seconds + ' s', canvas: null, timing: null
     };
   };
 

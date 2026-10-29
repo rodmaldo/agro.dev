@@ -46,6 +46,7 @@
           await AZFiles.applyTiled(S, base, cfg.gridM, cfg.rot, cfg.detail === 'det', (p, m) => upd(0.92 + 0.08 * p, m), cancel.current);
           try { AZApi.fields.update(field.id, { ha: +AZ.coverHa(S).toFixed(2), updated: new Date().toISOString() }); } catch (e) { }
           setProg(null); setStep(1); bump(); setTimeout(() => mapApi.current.fit && mapApi.current.fit(), 60);
+          if (root.AZLot) root.AZLot.save(S, { field, cfg, job, stage: 'wizard', version: root.AZSys && root.AZSys.VERSION });   // queda guardado: se puede cerrar y abrir después sin reprocesar
           return;
         }
         const o = { source: cfg.source, items: info.raw, file: cfg.source === 'ortho' ? info.ortho.f : cfg.source === 'sample' ? sampleFile() : null, ndvi: cfg.kind !== 'rgb' && cfg.source !== 'mosaic' ? cfg.ndvi : null, res: +cfg.res, quality: cfg.quality, lat: +cfg.lat, lon: +cfg.lon, rtk: cfg.prec === 'rtk' };
@@ -98,7 +99,7 @@
     const clear = () => { S.pts = []; S.ver++; bump(); schedule(0); };
     const onName = v => { const c = PAL[norm(v)]; S.meta.det.name = v; up({ detName: v, ...(c ? { color: c } : {}) }); if (c) S.meta.det.color = c; S.ver++; };
     const ready = pc.pos >= MIN && pc.neg >= MIN && ai.st === 'ok' && ai.n > 0 && cfg.detName.trim().length > 0;
-    const finish = () => { S.meta.det.name = cfg.detName.trim(); S.meta.det.color = cfg.color; AZ.mergeDet(S); onDone(); };
+    const finish = () => { S.meta.det.name = cfg.detName.trim(); S.meta.det.color = cfg.color; AZ.mergeDet(S); if (root.AZLot) root.AZLot.save(S, { field, cfg, job, stage: 'dash', version: root.AZSys && root.AZSys.VERSION }); onDone(); };
     const st = step === 3 && S.gw && S.det.length ? AZ.stats(S) : null;
     const setTool = t => { if (t !== 'poly') S.tmp = []; set({ tool: t }); mapApi.current.redraw && mapApi.current.redraw(); };
     const polyChanged = () => { AZ.polyChanged(S); bump(); if (step === 3 && AZ.pointCounts(S).pos) schedule(0); };

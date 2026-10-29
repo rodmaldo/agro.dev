@@ -113,7 +113,7 @@
     S.poly = AZ.tiledPoly(S, base.polyNative, rot || 0); S.geo = base.geo; S.meta.det.name = keep.det; S.meta.det.color = keep.col;
     AZ.prepareGrid(S, gridM);
     const spec = AZ.cellSpec(S), gw = S.gw, gh = S.gh; S.gw = 0; S.gh = 0;          // sin grilla mientras se recalcula
-    try { const buf = await AZDesktop.cells(base.tiled, spec, onProgress, cancel); S.gw = gw; S.gh = gh; AZ.applyCells(S, buf, detailed); }
+    try { const buf = await AZDesktop.cells(base.tiled, spec, onProgress, cancel); S.gw = gw; S.gh = gh; AZ.applyCells(S, buf, detailed); S.cellsBuf = buf; }
     catch (e) { S.gw = gw; S.gh = gh; throw e; }
   };
 

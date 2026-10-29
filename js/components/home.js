@@ -72,15 +72,17 @@
         <div className="cards">${list.slice().reverse().map(f => html`<article key=${f.id} className="card">
           <button type="button" className="cbody" onClick=${() => onOpen(f)} aria-label=${'Abrir lote ' + f.name}><${Thumb} src=${f.thumb} label=${f.name}/>
             <div className="ctxt"><b>${f.name}</b><span className="mu">${fmtHa(f.ha)}${f.inf != null ? ' · infértil ' + f1(f.inf, 1) + ' ha' : ''}</span>
+              ${f.saved && html`<span className="ok-tag">Procesado · se abre al instante</span>`}
               <span className="mu">${f.updated ? 'Guardado ' + new Date(f.updated).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : 'Creado ' + new Date(f.created).toLocaleDateString('es-AR')}</span></div></button>
-          <button type="button" className="lnk cdel" aria-label=${'Eliminar ' + f.name} onClick=${() => ask('Se elimina el lote "' + f.name + '" del proyecto. Los archivos de las fotos no se borran.', 'Eliminar', '¿Eliminar lote?').then(ok => { if (ok) { AZApi.fields.remove(f.id); setList(AZApi.fields.list(farm.id)); } })}><${Ic} n="trash" s=${14}/></button></article>`)}</div>
+          ${f.saved && html`<button type="button" className="lnk crep" aria-label=${'Reprocesar ' + f.name} title="Volver a cargar las fotos y procesar de nuevo" onClick=${() => ask('Se empieza de cero con las fotos del lote: el procesado guardado se reemplaza cuando vuelvas a guardar.', 'Reprocesar', '¿Reprocesar el lote?').then(ok => { if (ok) onOpen(f, true); })}>Reprocesar</button>`}
+          <button type="button" className="lnk cdel" aria-label=${'Eliminar ' + f.name} onClick=${() => ask('Se elimina el lote "' + f.name + '" del proyecto. Los archivos de las fotos no se borran.', 'Eliminar', '¿Eliminar lote?').then(ok => { if (ok) { AZApi.fields.remove(f.id); if (window.AZLot) window.AZLot.remove(f.id); setList(AZApi.fields.list(farm.id)); } })}><${Ic} n="trash" s=${14}/></button></article>`)}</div>
       </main>
       ${confirmNode}
       <${Foot}/></div>`;
   };
 
   /* ---------- 2 · CAMPO ---------- */
-  root.AZUI.Field = function Field({ user, field, job, setJob, onBack, onNext, onLogout }) {
+  root.AZUI.Field = function Field({ user, field, job, setJob, onBack, onNext, onLogout, openErr }) {
     const [busy, setBusy] = useState(false); const [over, setOver] = useState(false); const [projs, setProjs] = useState([]); const [msg, setMsg] = useState('');
     const dirR = useRef(), filR = useRef(), jsR = useRef(), seq = useRef(0);
     useEffect(() => { AZApi.listProjects().then(l => setProjs((l || []).filter(p => p.fieldId === field.id))).catch(() => { }); }, [field.id]);
@@ -125,6 +127,7 @@
             ${job.preset && html`<button className="btn fx sm" type="button" onClick=${() => { setJob(j => ({ ...j, preset: null })); setMsg(''); }}>Descartar</button>`}</div>
           <input ref=${jsR} type="file" accept=".json,application/json" hidden onChange=${fromFile}/>
           ${msg && html`<div className=${'note' + (job.preset ? '' : ' w')} role="status">${msg}</div>`}
+          ${openErr && html`<div className="note w" role="alert">${openErr}</div>`}
         </section>
 
         <section className="hcard grow2">

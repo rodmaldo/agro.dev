@@ -38,7 +38,7 @@ globalThis.htm={bind:h=>miniHtm.bind(h)};
 const realUS=React.useState;let FORCE=null;
 React.useState=init=>{let v=typeof init==='function'?init():init;if(FORCE&&v&&v.tool==='pan'&&v.vis)v={...v,...FORCE};return realUS(()=>v)};
 const base=path.join(__dirname,'..','js')+'/';
-for(const f of['api.js','engine.js','layers.js','exporter.js','geo.js','mosaic.js','map.js','files.js','desktop.js','sys.js','components/common.js','components/shared.js','components/splash.js','components/progress.js','components/home.js','components/mapcanvas.js','components/wizard.js','components/dashboard.js'])require(base+f);
+for(const f of['api.js','engine.js','layers.js','exporter.js','geo.js','mosaic.js','map.js','files.js','desktop.js','lotstate.js','sys.js','components/common.js','components/shared.js','components/splash.js','components/progress.js','components/home.js','components/mapcanvas.js','components/wizard.js','components/dashboard.js'])require(base+f);
 const U=AZUI,h=React.createElement;
 const ok=(n,el,...must)=>{const s=Server.renderToString(el);const miss=must.filter(m=>!m.test(s));console.log(miss.length?'FALLA':'OK',n,s.length,'bytes',miss.map(String).join(' '));if(miss.length)process.exitCode=1;return s};
 ok('Splash',h(U.Splash,{phase:'splash',onEnter(){}}));

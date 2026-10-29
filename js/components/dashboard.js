@@ -170,10 +170,13 @@
       } catch (e) { }
     };
     const captureR = useRef(capture); captureR.current = capture;
+    const saveLot = () => (root.AZLot ? root.AZLot.save(S, { field, cfg, job, stage: 'dash', version: AZSys.VERSION }) : Promise.resolve(false));
+    const saveLotR = useRef(saveLot); saveLotR.current = saveLot;
     useEffect(() => { const h = setTimeout(() => captureR.current(), 2500); return () => clearTimeout(h); }, []);
-    const goHome = () => ask('Volvés al proyecto para abrir o cargar otro lote. Lo que no guardaste con Archivo → Guardar proyecto se pierde.', 'Volver al proyecto', '¿Volver al proyecto?').then(async ok => { if (ok) { await captureR.current(); onHome(); } });
+    const goHome = () => ask('Volvés al proyecto. El lote queda guardado con todas sus capas y configuraciones y se abre al instante, sin procesar de nuevo.', 'Volver al proyecto', '¿Volver al proyecto?').then(async ok => { if (ok) { await saveLotR.current(); await captureR.current(); onHome(); } });
     const reconfig = () => ask('Reconfigurar la grilla reinicia la detección y las capas.', 'Reconfigurar', '¿Reconfigurar la grilla?').then(ok => { if (ok) onReconfig(); });
     const [rev, bump] = useReducer(x => x + 1, 0);
+    useEffect(() => { if (rev === 0) return; const h = setTimeout(() => saveLotR.current(), 3000); return () => clearTimeout(h); }, [rev]);   // autoguardado 3 s después del último cambio
     const [ui, setUi] = useState(() => ({ ...baseUi(), active: 'det', sel: ['det'], drag: null, menu: null, ctx: null, dockR: true, tabA: 'res', tabB: 'capas', add: null, shift: false, exportOpen: false, help: false, yld: 3000 }));
     const uiR = useRef(ui); uiR.current = ui;
     const set = p => setUi(u => ({ ...u, ...p }));
@@ -271,8 +274,9 @@
         buf: { on: M.buf.on, m: M.buf.m, color: M.buf.color }, poly: nrm(S.poly), pts: S.pts.map(p => ({ u: p.x / S.W, v: p.y / S.H, s: p.v })), stats: st };
       AZFiles.download('agro-dev_' + field.name.replace(/\W+/g, '_') + '.json', JSON.stringify(proj, null, 1), 'application/json');
       try { await AZApi.saveProject(proj); } catch (e) { }
+      const okLot = await saveLotR.current();
       captureR.current();
-      toast('Proyecto guardado (archivo .json y copia en este navegador)');
+      toast(okLot ? 'Lote guardado completo: se abre al instante desde el proyecto, sin reprocesar (y copia .json de la configuración)' : 'Proyecto guardado (archivo .json y copia en este navegador)');
     };
 
     const items = {
