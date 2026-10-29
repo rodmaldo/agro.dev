@@ -303,7 +303,7 @@
         <${Menu} id="view" label="Vista" open=${ui.menu} setOpen=${setMenu} items=${items.view}/>
         <${Menu} id="help" label="Ayuda" open=${ui.menu} setOpen=${setMenu} items=${items.help}/>
         <span className="grow"></span><button className="btn pri sm" type="button" onClick=${() => set({ exportOpen: true })}><${Ic} n="download" s=${13}/> Exportar</button>
-        <${root.AZUI.GearBtn}/><span className="usr">${user}</span><button className="lnk" type="button" onClick=${onLogout}>Salir</button>
+        <${root.AZUI.GearBtn}/><span className="usr">${user}</span>${root.AZUI.LOGIN && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}
       </header>
 
       <div className=${'main' + (ui.dockR ? '' : ' nr')}>

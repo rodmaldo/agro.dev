@@ -134,7 +134,7 @@
 
     return html`<div className="screen">
       <header className="top"><button className="lnk" type="button" onClick=${onBack} aria-label="Volver a Campo"><${Ic} n="back" s=${16}/></button><div className="brand">agro<i>.dev</i></div><span className="crumb">${field.name}</span>
-        <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span><button className="lnk" type="button" onClick=${onLogout}>Salir</button></header>
+        <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span>${root.AZUI.LOGIN && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}</header>
       <${StepBar} steps=${STEPS} cur=${stepIdx} onGo=${goStep}/>
 
       ${step === 0 && html`<main className="wbody one"><div className="wscroll">

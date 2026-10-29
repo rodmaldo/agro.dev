@@ -28,7 +28,7 @@
     const jobR = useRef(job); jobR.current = job;
     const setJob = f => setJobS(j => { const n = typeof f === 'function' ? f(j) : f; jobR.current = n; return n; });
 
-    const enter = () => { const s = AZApi.session(); if (s) { setUser(s.user); setStage('home'); } else setStage('login'); };
+    const enter = () => { const s = AZApi.session(); if (!AZUI.LOGIN) { setUser(''); setStage('home'); } else if (s) { setUser(s.user); setStage('home'); } else setStage('login'); };
     const logout = () => { AZApi.logout(); setUser(null); setFarm(null); setField(null); setJob(newJob()); S.current = AZ.newState(); setStage('splash'); };
     const openFarm = f => { setFarm(f); setStage('proj'); };
     const [openErr, setOpenErr] = useState('');

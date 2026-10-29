@@ -7,7 +7,7 @@
   const Head = ({ user, onLogout, back, title }) => html`<header className="top">
     ${back && html`<button className="lnk" type="button" onClick=${back} aria-label="Volver"><${Ic} n="back" s=${16}/></button>`}
     <div className="brand">agro<i>.dev</i></div>${title && html`<span className="crumb">${title}</span>`}
-    <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span>${onLogout && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}</header>`;
+    <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span>${onLogout && root.AZUI.LOGIN && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}</header>`;
 
   const fmtHa = n => n ? f1(n, 1) + ' ha' : '— ha';
   const Thumb = ({ src, label }) => src ? html`<img className="thumb" src=${src} alt=${'Vista del último guardado de ' + label}/>` : html`<div className="thumb empty"><${Ic} n="grid" s=${26}/><span>Sin imagen todavía</span></div>`;

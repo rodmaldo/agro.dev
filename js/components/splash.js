@@ -7,6 +7,9 @@
   const SPROUT = ['###.....###', '####...####', '.####.####.', '..#######..', '....###....', '....###....', '....###....', '....###....'];
   const LW = 112, LH = 40;
 
+  /* Ingreso con usuario y contraseña: desactivado por ahora (solo se muestra el logo). Para volver a pedirlo: LOGIN = true. */
+  root.AZUI.LOGIN = false;
+
   root.AZUI.Splash = function Splash({ phase, onEnter, children }) {
     const ref = useRef(null); const [ready, setReady] = useState(false);
     useEffect(() => {
@@ -46,9 +49,10 @@
       })();
       return () => { dead = true; cancelAnimationFrame(raf); };
     }, []);
+    useEffect(() => { if (!root.AZUI.LOGIN && ready && phase === 'splash') { const h = setTimeout(onEnter, 500); return () => clearTimeout(h); } }, [ready, phase]);
     return html`<div className="splash">
       <canvas ref=${ref} role="img" aria-label="agro.dev"></canvas>
-      ${ready && phase === 'splash' && html`<button className="enter" type="button" onClick=${onEnter} aria-label="Ingresar"><${Ic} n="enter" s=${24}/></button><span className="enter-cap">ingresar</span>`}
+      ${ready && phase === 'splash' && root.AZUI.LOGIN && html`<button className="enter" type="button" onClick=${onEnter} aria-label="Ingresar"><${Ic} n="enter" s=${24}/></button><span className="enter-cap">ingresar</span>`}
       ${children}
     </div>`;
   };
