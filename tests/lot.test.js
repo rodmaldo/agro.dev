@@ -17,7 +17,7 @@ const L = require('../js/lotstate.js');
   AZ.detect(S, 50, true);
   AZ.setBuffer(S, true, 5); AZ.addManual(S); S.man[10] = 1; S.man[11] = 1;
   const h = AZ.addHist(S, 'exg', 'Mi histograma'); S.hl[0].mask[20] = 1; S.hl[0].mask[21] = 1; S.hl[0].range = [0.1, 0.2];
-  AZ.addAmb(S); S.amb.rates = [0, 0, 20, 30, 40]; AZ.ambPalette(S, 'az');
+  AZ.addAmb(S); AZ.ambAdd(S); S.amb.rates = [0, 0, 20, 30, 40, 40]; AZ.ambPalette(S, 'az'); AZ.ambWand(S, 5, 5, false);   // 6 niveles y una selección en curso (la selección no se guarda)
   S.badd[30] = 1; S.berase[31] = 1; AZ.mergeDet(S); S.meta.det.name = 'Salitre fuerte'; S.zord = ['amb', 'det'];
   // límite -> píxeles nativos del ortomosaico y de vuelta (para recortar el .tif exactamente al límite)
   { const nat = [[400, 300], [3500, 500], [3000, 2600], [600, 2400]], keep = S.poly; S.poly = AZ.tiledPoly(S, nat, S.rot); const back = AZ.polyNative(S);
@@ -32,7 +32,7 @@ const L = require('../js/lotstate.js');
   const eq = (a, b, nm) => { assert(a && b && a.length === b.length, nm + ' largo'); for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) throw new Error(nm + ' difiere en ' + i); };
   eq(S.det, S2.det, 'det'); eq(S.auto, S2.auto, 'auto'); eq(S.badd, S2.badd, 'badd'); eq(S.berase, S2.berase, 'berase'); eq(S.man, S2.man, 'man'); eq(S.buf, S2.buf, 'buf'); eq(S.inside, S2.inside, 'inside');
   eq(S.hl[0].mask, S2.hl[0].mask, 'capa'); assert.strictEqual(S2.hl[0].name, 'Mi histograma'); assert.deepStrictEqual(S2.hl[0].range, [0.1, 0.2]);
-  eq(S.amb.cls, S2.amb.cls, 'ambientación'); assert.deepStrictEqual(S2.amb.rates, [0, 0, 20, 30, 40]); assert.strictEqual(S2.amb.pal, 'az');
+  eq(S.amb.cls, S2.amb.cls, 'ambientación'); assert.deepStrictEqual(S2.amb.rates, [0, 0, 20, 30, 40, 40]); assert.strictEqual(S2.amb.th.length, 5); assert(!/"sel"/.test(json), 'la selección no se guarda'); assert.strictEqual(S2.amb.pal, 'az');
   assert.deepStrictEqual(S2.pts, S.pts); assert.deepStrictEqual(S2.poly, S.poly); assert.deepStrictEqual(S2.zord, S.zord);
   assert.strictEqual(S2.meta.det.name, 'Salitre fuerte'); assert.strictEqual(S2.meta.buf.on, true); assert.strictEqual(S2.rot, 12.5); assert.strictEqual(S2.cs, S.cs);
   assert.strictEqual(S2.limUser, true); eq(S.F, S2.F, 'características'); assert.strictEqual(S2.tiled.server, 'otro');

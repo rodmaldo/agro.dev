@@ -41,7 +41,7 @@
   };
 
   /* Dosis por celda. Infértil y búfer = 0. Con Ambientación activa, cada nivel lleva su dosis (L/ha); sin ella, el fértil recibe la dosis única.
-     cls: 0 = fuera del lote · 1 = INFERTIL · 2 = BUFFER · 3 = FERTIL (dosis única) · 4..8 = NIVEL 1..5 de la ambientación */
+     cls: 0 = fuera del lote · 1 = INFERTIL · 2 = BUFFER · 3 = FERTIL (dosis única) · 4.. = NIVEL 1..n de la ambientación (hasta 8 niveles) */
   X.cellRates = function (S, o) {
     const n = S.gw * S.gh, U = AZ.union(S), b = S.meta.buf, A = S.amb && S.amb.inc && S.amb.cls ? S.amb : null, dose = +o.dose || 0;
     const rate = new Float32Array(n), cls = new Uint8Array(n);
@@ -49,12 +49,12 @@
       if (!S.inside[i]) continue;
       if (U[i]) cls[i] = 1;
       else if (b.on && b.inc && S.buf[i]) cls[i] = 2;
-      else if (A && A.cls[i] < 5) { cls[i] = 4 + A.cls[i]; rate[i] = Math.max(0, +A.rates[A.cls[i]] || 0); }
+      else if (A && A.cls[i] < 255) { cls[i] = 4 + A.cls[i]; rate[i] = Math.max(0, +A.rates[A.cls[i]] || 0); }
       else { cls[i] = 3; rate[i] = dose; }
     }
     return { rate, cls, amb: !!A };
   };
-  X.CLASS_NAME = ['', 'INFERTIL', 'BUFFER', 'FERTIL', 'NIVEL 1', 'NIVEL 2', 'NIVEL 3', 'NIVEL 4', 'NIVEL 5'];
+  X.CLASS_NAME = ['', 'INFERTIL', 'BUFFER', 'FERTIL', 'NIVEL 1', 'NIVEL 2', 'NIVEL 3', 'NIVEL 4', 'NIVEL 5', 'NIVEL 6', 'NIVEL 7', 'NIVEL 8'];
 
   /* Regiones: polígonos con huecos (un anillo exterior en sentido horario + huecos antihorarios) de las celdas marcadas en m.
      Mucho menos polígonos que un rectángulo por corrida: el display JD carga más rápido y es más estable. Coordenadas en vértices de grilla (i, j). */

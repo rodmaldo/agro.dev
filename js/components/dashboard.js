@@ -53,7 +53,7 @@
       const B = 64; let mx = 1; for (let b = 0; b < B; b++) mx = Math.max(mx, bins.rest[b] + bins.det[b]);
       const bw = w / B, t = A.th;
       for (let b = 0; b < B; b++) {
-        const v = bins.lo + (b + 0.5) / B * span, k = v < t[0] ? 0 : v < t[1] ? 1 : v < t[2] ? 2 : v < t[3] ? 3 : 4, hh = Math.sqrt((bins.rest[b] + bins.det[b]) / mx) * (h - 26);
+        const v = bins.lo + (b + 0.5) / B * span, k = t.filter(x => v >= x).length, hh = Math.sqrt((bins.rest[b] + bins.det[b]) / mx) * (h - 26);
         g.fillStyle = A.colors[k]; g.fillRect(b * bw, h - hh - 16, bw - 1, hh);
       }
       g.fillStyle = '#fff'; t.forEach(v => { const x = Math.max(1, Math.min(w - 1, X(v) * w)); g.fillRect(x - 1, 0, 2, h - 16); g.beginPath(); g.moveTo(x - 6, h - 3); g.lineTo(x + 6, h - 3); g.lineTo(x, h - 15); g.closePath(); g.fill(); });
@@ -66,8 +66,8 @@
       onPointerDown=${down} onPointerMove=${e => { if (drag.current != null) onTh(drag.current, val(e)); }} onPointerUp=${() => { drag.current = null; }}></canvas>`;
   }
 
-  function AmbPanel({ S, A, rev, bump, toast, refresh }) {
-    const st = AZ.ambStats(S) || { ha: [0, 0, 0, 0, 0], tot: 0 }, unit = 'L/ha';
+  function AmbPanel({ S, A, rev, bump, toast, refresh, tool, setTool }) {
+    const st = AZ.ambStats(S) || { ha: A.rates.map(() => 0), tot: 0 }, unit = 'L/ha', nsel = AZ.ambSelCount(S);
     const vol = A.rates.reduce((s, r, k) => s + (+r || 0) * st.ha[k], 0);
     return html`<div className="amb">
       <label className="fld"><span className="fl">Índice de color</span><select value=${A.idx} onChange=${e => { AZ.ambIdx(S, e.target.value); bump(); }}>${Object.keys(S.idx).map(k => html`<option key=${k} value=${k}>${IDX[k] || k}</option>`)}</select></label>
@@ -75,12 +75,20 @@
       <div className="amb-pal" aria-hidden="true">${A.colors.map(c => html`<i key=${c} style=${{ background: c }}></i>`)}</div>
       <${AmbHist} S=${S} A=${A} rev=${rev} onTh=${(k, v) => { AZ.ambSetTh(S, k, v); bump(); }}/>
       <div className="row"><button className=${'btn sm' + (A.mode === 'igual' ? ' pri' : '')} type="button" onClick=${() => { AZ.ambAuto(S, 'igual'); bump(); }}>Intervalos iguales</button><button className=${'btn sm' + (A.mode === 'perc' ? ' pri' : '')} type="button" onClick=${() => { AZ.ambAuto(S, 'perc'); bump(); }}>Igual superficie</button></div>
-      <table className="amb-t"><thead><tr><th></th><th>Nivel</th><th>ha</th><th>%</th><th>${unit}</th></tr></thead><tbody>
+      <table className="amb-t"><thead><tr><th></th><th>Nivel</th><th>ha</th><th>%</th><th>${unit}</th><th></th></tr></thead><tbody>
         ${A.rates.map((r, k) => html`<tr key=${k}><td><i className="sw" style=${{ background: A.colors[k] }}></i></td><td>Nivel ${k + 1}</td><td className="n">${f1(st.ha[k], 1)}</td><td className="n">${f1(st.tot ? st.ha[k] / st.tot * 100 : 0, 1)}</td>
-          <td><input type="number" min="0" step="0.5" value=${r} aria-label=${'Dosis del nivel ' + (k + 1) + ' en L/ha'} onInput=${e => { A.rates[k] = e.target.value === '' ? '' : Math.max(0, +e.target.value); S.ver++; bump(); }}/></td></tr>`)}
+          <td><input type="number" min="0" step="0.5" value=${r} aria-label=${'Dosis del nivel ' + (k + 1) + ' en L/ha'} onInput=${e => { A.rates[k] = e.target.value === '' ? '' : Math.max(0, +e.target.value); S.ver++; bump(); }}/></td>
+          <td><button type="button" className="lnk" aria-label=${'Quitar el nivel ' + (k + 1)} title="Quitar este nivel (se une con el vecino)" disabled=${A.rates.length <= AZ.AMB_MIN} onClick=${() => { AZ.ambRemove(S, k); bump(); }}>×</button></td></tr>`)}
       </tbody></table>
+      <div className="row"><button className="btn sm" type="button" disabled=${A.rates.length >= AZ.AMB_MAX} onClick=${() => { AZ.ambAdd(S); bump(); }}>+ Agregar nivel</button><span className="mu fx">${A.rates.length} niveles (de ${AZ.AMB_MIN} a ${AZ.AMB_MAX})</span></div>
+      <div className="fld amb-sel"><span className="fl">Selección smart (varita)</span>
+        <div className="row"><button className=${'btn sm' + (tool === 'wand' ? ' pri' : '')} type="button" onClick=${() => setTool('wand')}>Varita (W)</button>
+          <select aria-label="Niveles vecinos que entran en la selección" value=${A.span || 0} onChange=${e => { A.span = +e.target.value; bump(); }}><option value="0">Solo el mismo nivel</option><option value="1">± 1 nivel</option><option value="2">± 2 niveles</option></select></div>
+        <div className="mu">Clic en una zona de color: selecciona la zona conexa de ese nivel. <kbd>Mayús</kbd>+clic suma otra zona; clic derecho quita.</div>
+        <div className="row"><button className="btn pri sm" type="button" disabled=${!nsel} onClick=${() => { const n = AZ.ambSelToDet(S); refresh(); toast(n.toLocaleString('es-AR') + ' celdas pasaron a Detección de zonas (infértil)'); }}>Convertir a Detección de zonas</button><button className="btn sm" type="button" disabled=${!nsel} onClick=${() => { AZ.ambSelClear(S); bump(); }}>Limpiar</button></div>
+        <div className="mu">${nsel ? nsel.toLocaleString('es-AR') + ' celdas seleccionadas · ' + f1(nsel * AZ.cellHa(S), 2) + ' ha' : 'Sin selección.'}</div></div>
       <div className="kv"><span>Volumen total</span><span>${f1(vol, 0)} L</span></div>
-      <div className="mu">Dosis <b>0</b> = zona infértil: no se aplica. Ejemplo: dejá solo el nivel fértil en 40 L/ha y los demás en 0.</div>
+      <div className="mu">Dosis <b>0</b> = zona infértil: no se aplica. Ejemplo: dejá solo el nivel fértil en 40 L/ha y los demás en 0. Con la varita podés pasar zonas puntuales a Detección de zonas.</div>
       <label className="tog" title="Usar esta capa como mapa de dosis al exportar"><input type="checkbox" checked=${!!A.inc} onChange=${e => { A.inc = e.target.checked; S.ver++; bump(); }}/><i></i><span>Usar en la prescripción</span></label>
       <button className="btn sm" type="button" onClick=${() => { const n = AZ.ambToDet(S); refresh(); toast(n.toLocaleString('es-AR') + ' celdas con dosis 0 pasaron a Detección de zonas (infértil)'); }}>Convertir niveles con dosis 0 a Detección de zonas</button>
     </div>`;
@@ -299,6 +307,7 @@
     };
     combineR.current = combine;
     const toDet = id => {
+      if (id === 'amb') { const n = AZ.ambSelToDet(S); set({ ctx: null }); refresh(); return toast(n ? n.toLocaleString('es-AR') + ' celdas pasaron a Detección de zonas (infértil)' : 'Primero seleccioná una zona con la varita'); }
       if (id === 'buf') { const n = AZ.combineBuf(S); set({ active: 'det', sel: ['det'], ctx: null }); refresh(); return toast('Búfer convertido a "' + M.det.name + '" (+' + n.toLocaleString('es-AR') + ' celdas)'); }
       const r = AZ.combineLayers(S, [id, 'det']); if (!r) return;
       set({ active: 'det', sel: ['det'], ctx: null }); refresh(); toast('Convertida en detección de zonas: ' + r.cells.toLocaleString('es-AR') + ' celdas · se actualizaron las hectáreas fértiles e infértiles');
@@ -358,7 +367,7 @@
         <${MapCanvas} S=${S} rev=${rev} ui=${ui} held=${held} api=${api} mapApi=${mapApi}>
           <div className="optbar"><b>${((TOOLS.find(t => t[0] === ui.tool) || [])[2] || '').replace(/ \(.\).*$/, '')}</b><span className="mu">${hint}</span>
             ${(ui.tool === 'brush' || ui.tool === 'erase') && html`<span className="opt">Tamaño ${ui.brushN} celdas · ${f1(ui.brushN * AZ.cellM(S), 1)} m</span>`}
-            ${ui.tool === 'wand' && html`<span className="opt">Tolerancia ${ui.tol} %${ui.shift ? ' · modo SUMAR (+)' : ''}</span>`}</div>
+            ${ui.tool === 'wand' && html`<span className="opt">${ui.active === 'amb' && S.amb ? 'Zona del mismo nivel' + (S.amb.span ? ' ±' + S.amb.span : '') : 'Tolerancia ' + ui.tol + ' %'}${ui.shift ? ' · modo SUMAR (+)' : ''}</span>`}</div>
           <div className="mapbadge">${st ? (S.limUser ? html`<b>${f1(st.fer)}</b> ha fértil · <b>${f1(st.inf)}</b> ha ${M.det.name}` : 'Definí el límite del lote para ver las hectáreas') : ''}</div>
         <//>
 
@@ -412,7 +421,7 @@
             <div className="mu lhint">Ctrl+clic: varias capas · Ctrl+E: combinar · clic derecho: más opciones · arrastrá para ordenar</div>`}
             ${ui.tabB === 'props' && html`<div className="capr"><div className="ph"><span>${act.name}</span><span className="mu">${act.kind === 'det' ? 'Detección IA' : act.kind === 'man' ? 'Detección manual' : act.kind === 'hist' ? 'Histograma / NDVI' : act.kind === 'amb' ? 'Ambientación · 5 niveles' : act.kind === 'buf' ? 'Búfer' : act.kind === 'lim' ? 'Límites' : 'Imagen'}</span></div>
               <div className="pb">
-              ${act.kind === 'amb' && html`<${AmbPanel} S=${S} A=${S.amb} rev=${rev} bump=${bump} toast=${toast} refresh=${refresh}/>`}
+              ${act.kind === 'amb' && html`<${AmbPanel} S=${S} A=${S.amb} rev=${rev} bump=${bump} toast=${toast} refresh=${refresh} tool=${ui.tool} setTool=${setTool}/>`}
               ${(act.kind === 'det' || act.kind === 'man' || act.kind === 'hist') && html`<label className="fld"><span className="fl">Nombre</span><input type="text" maxLength="40" value=${A.name} onInput=${e => { A.name = e.target.value; bump(); }}/></label>
                 <label className="tog" title="Incluir al combinar y exportar"><input type="checkbox" checked=${!!A.inc} onChange=${e => { A.inc = e.target.checked; AZ.mchange(S); refresh(); }}/><i></i><span>Incluir en el resultado y la exportación</span></label>`}
               ${(ui.tool === 'brush' || ui.tool === 'erase') && html`<${Slider} label="Tamaño del pincel" min=${1} max=${40} value=${ui.brushN} fmt=${v => v + ' celdas'} unit=${' · ' + f1(ui.brushN * AZ.cellM(S), 1) + ' m'} onChange=${v => set({ brushN: v })}/>
@@ -457,6 +466,7 @@
 
       ${ui.ctx && html`<div className="md ctxm" role="menu" style=${{ position: 'fixed', left: ui.ctx.x, top: ui.ctx.y }}>
         ${(combinable.length >= 2 || (sel.includes('buf') && sel.includes('det'))) && html`<button type="button" className="mi" role="menuitem" onClick=${combine}><span className="ck"></span><span><b>Combinar capas seleccionadas</b></span><kbd>Ctrl+E</kbd></button>`}
+        ${(act.kind === 'amb' && AZ.ambSelCount(S) > 0) && html`<button type="button" className="mi" role="menuitem" onClick=${() => toDet('amb')}><span className="ck"></span><span><b>Convertir selección a Detección de zonas</b></span><kbd></kbd></button>`}
         ${(act.kind === 'hist' || act.kind === 'man' || act.kind === 'buf') && html`<button type="button" className="mi" role="menuitem" onClick=${() => toDet(act.id)}><span className="ck"></span><span><b>Convertir a Detección de zonas</b></span><kbd></kbd></button>`}
         ${act.kind !== 'img' && act.kind !== 'det' && act.kind !== 'lim' && html`<button type="button" className="mi" role="menuitem" onClick=${() => removeLayer(act.id)}><span className="ck"></span><span>Eliminar capa</span><kbd></kbd></button>`}
         <button type="button" className="mi" role="menuitem" disabled=${M.buf.on} onClick=${addBuf}><span className="ck"></span><span>Nueva capa · Búfer</span><kbd></kbd></button>

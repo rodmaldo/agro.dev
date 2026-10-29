@@ -34,7 +34,7 @@
     const N = S.gw * S.gh;
     const lay = [];
     for (const l of S.hl) { const { mask, prev, ...rest } = l; lay.push({ ...rest, mask: await L.pack(mask) }); }
-    const amb = S.amb ? (({ cls, ...r }) => r)(S.amb) : null;
+    const amb = S.amb ? (({ cls, sel, ...r }) => r)(S.amb) : null;
     return {
       format: 'agro.dev/lote', v: VERSION, app: ctx.version || '', savedAt: new Date().toISOString(), fieldId: field.id, name: field.name, stage: stage || 'dash',
       cfg, note: job.note || '', timing: job.timing || null, folders: job.folders || [],
@@ -87,7 +87,7 @@
     S.hl = [];
     for (const l of snap.hl || []) { const { mask, ...r } = l; S.hl.push({ ...r, mask: (await L.unpack(mask, N)) || new Uint8Array(N), prev: null }); }
     S.amb = null;
-    if (snap.amb) { S.amb = { ...snap.amb, cls: null }; AZ.ambClassify(S); }
+    if (snap.amb) { S.amb = { ...snap.amb, cls: null, sel: null, span: snap.amb.span || 0 }; AZ.ambClassify(S); }
     if (S.auto || S.badd || S.berase) AZ.mergeDet(S); else S.det = new Uint8Array(N);
     S.hasDet = !!snap.hasDet; AZ.calcBuf(S); S.mver++; S.ver++;
     return { base, cfg: snap.cfg, stage: snap.stage, job: { note: snap.note || base.note, timing: snap.timing || null, folders: snap.folders || [], base, info: null, preset: null, presetDone: true } };

@@ -121,45 +121,89 @@
     vi: { name: 'Violeta → Amarillo', c: ['#440154', '#3b528b', '#21908d', '#5dc863', '#fde725'] },
     na: { name: 'Naranjas', c: ['#fff5eb', '#fdd0a2', '#fd8d3c', '#d94801', '#7f2704'] }
   };
+  /* colores de n niveles: se interpolan a lo largo de la gama elegida (5 colores base) */
+  const hex2 = h => [1, 3, 5].map(k => parseInt(h.substr(k, 2), 16)), toHex = a => '#' + a.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+  AZ.ambColors = function (palKey, n) {
+    const c = (AZ.AMB_PAL[palKey] || AZ.AMB_PAL.rv).c; if (n === c.length) return c.slice();
+    return Array.from({ length: n }, (_, i) => { const t = n > 1 ? i / (n - 1) * (c.length - 1) : 0, k = Math.min(c.length - 2, t | 0), f = t - k, a = hex2(c[k]), b = hex2(c[k + 1]); return toHex(a.map((v, q) => v + (b[q] - v) * f)); });
+  };
+  AZ.AMB_MIN = 2; AZ.AMB_MAX = 8;
   AZ.addAmb = function (S, idxKey) {
     if (S.amb) return false;
     const ix = idxKey && S.idx[idxKey] ? idxKey : (S.idx.ndvi ? 'ndvi' : 'exg');
-    S.amb = { name: 'Ambientación', vis: true, inc: true, color: AZ.AMB_PAL.rv.c[4], idx: ix, pal: 'rv', colors: AZ.AMB_PAL.rv.c.slice(), rates: [0, 0, 40, 40, 40], th: [0, 0, 0, 0], cls: null, mode: 'igual', lo: 0, hi: 1 };
+    S.amb = { name: 'Ambientación', vis: true, inc: true, color: AZ.AMB_PAL.rv.c[4], idx: ix, pal: 'rv', colors: AZ.AMB_PAL.rv.c.slice(), rates: [0, 0, 40, 40, 40], th: [0, 0, 0, 0], cls: null, sel: null, span: 0, mode: 'igual', lo: 0, hi: 1 };
     AZ.ambAuto(S, 'igual'); return true;
   };
-  AZ.ambPalette = function (S, key) { const p = AZ.AMB_PAL[key]; if (!p || !S.amb) return; S.amb.pal = key; S.amb.colors = p.c.slice(); S.amb.color = p.c[4]; S.ver++; };
-  /* modo 'igual': 5 intervalos iguales del rango (percentiles 2–98 %) · 'perc': 5 niveles con la misma superficie */
+  AZ.ambPalette = function (S, key) { const p = AZ.AMB_PAL[key]; if (!p || !S.amb) return; S.amb.pal = key; S.amb.colors = AZ.ambColors(key, S.amb.rates.length); S.amb.color = S.amb.colors[S.amb.colors.length - 1]; S.ver++; };
+  /* modo 'igual': n intervalos iguales del rango (percentiles 2–98 %) · 'perc': n niveles con la misma superficie */
   AZ.ambAuto = function (S, mode) {
-    const A = S.amb; if (!A) return; const a = S.idx[A.idx], n = NN(S), v = [];
+    const A = S.amb; if (!A) return; const a = S.idx[A.idx], n = NN(S), v = [], m = A.rates.length;
     const stp = Math.max(1, Math.floor(n / 200000));
     for (let i = 0; i < n; i += stp) if (S.inside[i] && S.valid[i]) v.push(a[i]);
-    if (v.length < 10) { const [lo, hi] = S.lim[A.idx]; A.lo = lo; A.hi = hi; A.th = [1, 2, 3, 4].map(k => lo + (hi - lo) * k / 5); }
+    const ks = Array.from({ length: m - 1 }, (_, k) => k + 1);
+    if (v.length < 10) { const [lo, hi] = S.lim[A.idx]; A.lo = lo; A.hi = hi; A.th = ks.map(k => lo + (hi - lo) * k / m); }
     else {
       v.sort((x, y) => x - y); const q = p => v[Math.min(v.length - 1, Math.max(0, Math.round(p * (v.length - 1))))];
       const lo = q(0.02), hi = q(0.98); A.lo = lo; A.hi = hi;
-      A.th = mode === 'perc' ? [0.2, 0.4, 0.6, 0.8].map(q) : [1, 2, 3, 4].map(k => lo + (hi - lo) * k / 5);
+      A.th = mode === 'perc' ? ks.map(k => q(k / m)) : ks.map(k => lo + (hi - lo) * k / m);
     }
     A.mode = mode; AZ.ambClassify(S);
   };
   AZ.ambIdx = function (S, key) { if (!S.amb || !S.idx[key]) return; S.amb.idx = key; AZ.ambAuto(S, S.amb.mode); };
-  AZ.ambSetTh = function (S, k, v) { const A = S.amb, e = (A.hi - A.lo) * 0.002; A.th[k] = Math.max(k ? A.th[k - 1] + e : -Infinity, Math.min(k < 3 ? A.th[k + 1] - e : Infinity, v)); AZ.ambClassify(S); };
+  AZ.ambSetTh = function (S, k, v) { const A = S.amb, e = (A.hi - A.lo) * 0.002, last = A.th.length - 1; A.th[k] = Math.max(k ? A.th[k - 1] + e : -Infinity, Math.min(k < last ? A.th[k + 1] - e : Infinity, v)); AZ.ambClassify(S); };
+  /* Agregar un nivel: parte en dos el nivel de mayor superficie (la dosis de ambos queda igual a la del original) */
+  AZ.ambAdd = function (S) {
+    const A = S.amb; if (!A || A.rates.length >= AZ.AMB_MAX) return false;
+    const st = AZ.ambStats(S), n = A.rates.length; let k = 0; if (st) for (let i = 1; i < n; i++) if (st.ha[i] > st.ha[k]) k = i;
+    const lb = k === 0 ? A.lo : A.th[k - 1], ub = k === n - 1 ? A.hi : A.th[k];
+    A.th.splice(k, 0, (lb + ub) / 2); A.rates.splice(k + 1, 0, A.rates[k]);
+    A.colors = AZ.ambColors(A.pal, n + 1); A.color = A.colors[n]; A.sel = null; AZ.ambClassify(S); return true;
+  };
+  /* Quitar el nivel k: se une con el vecino (el de arriba, o el de abajo si es el último) */
+  AZ.ambRemove = function (S, k) {
+    const A = S.amb, n = A && A.rates.length; if (!A || n <= AZ.AMB_MIN || k < 0 || k >= n) return false;
+    A.th.splice(Math.min(k, n - 2), 1); A.rates.splice(k, 1);
+    A.colors = AZ.ambColors(A.pal, n - 1); A.color = A.colors[n - 2]; A.sel = null; AZ.ambClassify(S); return true;
+  };
   AZ.ambClassify = function (S) {
-    const A = S.amb, n = NN(S), a = S.idx[A.idx], c = new Uint8Array(n).fill(255), t = A.th;
-    for (let i = 0; i < n; i++) if (S.inside[i]) { const x = S.valid[i] ? a[i] : -Infinity; c[i] = x < t[0] ? 0 : x < t[1] ? 1 : x < t[2] ? 2 : x < t[3] ? 3 : 4; }
+    const A = S.amb, n = NN(S), a = S.idx[A.idx], c = new Uint8Array(n).fill(255), t = A.th, m = t.length;
+    for (let i = 0; i < n; i++) if (S.inside[i]) { const x = S.valid[i] ? a[i] : -Infinity; let k = 0; while (k < m && x >= t[k]) k++; c[i] = k; }
     A.cls = c; S.ver++;
   };
-  /* superficie (ha) y % por nivel */
+  /* superficie (ha) por nivel */
   AZ.ambStats = function (S) {
-    const A = S.amb, ch = AZ.cellHa(S), n = NN(S), ha = [0, 0, 0, 0, 0]; if (!A || !A.cls) return null;
-    for (let i = 0; i < n; i++) if (S.inside[i] && A.cls[i] < 5) ha[A.cls[i]] += ch;
+    const A = S.amb; if (!A || !A.cls) return null; const ch = AZ.cellHa(S), n = NN(S), ha = new Array(A.rates.length).fill(0);
+    for (let i = 0; i < n; i++) if (S.inside[i] && A.cls[i] < 255) ha[A.cls[i]] += ch;
     return { ha, tot: ha.reduce((x, y) => x + y, 0) };
   };
   /* Los niveles con dosis 0 pasan a ser Detección de zonas (infértil): actualiza fértil / infértil */
   AZ.ambToDet = function (S) {
     const A = S.amb, n = NN(S); if (!A || !A.cls) return 0; let c = 0;
     if (!S.badd || S.badd.length !== n) S.badd = new Uint8Array(n);
-    for (let i = 0; i < n; i++) if (S.inside[i] && A.cls[i] < 5 && !(+A.rates[A.cls[i]] > 0)) { S.badd[i] = 1; if (S.berase) S.berase[i] = 0; c++; }
+    for (let i = 0; i < n; i++) if (S.inside[i] && A.cls[i] < 255 && !(+A.rates[A.cls[i]] > 0)) { S.badd[i] = 1; if (S.berase) S.berase[i] = 0; c++; }
     AZ.mergeDet(S); return c;
+  };
+
+  /* ---- varita (selección inteligente) sobre la Ambientación: zona conexa del mismo nivel de color (span = niveles vecinos que también entran) ---- */
+  AZ.ambWand = function (S, ci, cj, add) {
+    const A = S.amb; if (!A || !A.cls) return 'No hay capa de ambientación';
+    const c0 = cj * S.gw + ci; if (!S.inside[c0] || A.cls[c0] === 255) return 'Ese punto está fuera del límite del lote';
+    const lv = A.cls[c0], sp = Math.max(0, A.span | 0), reg = flood(S, c0, k => S.inside[k] && S.valid[k] && A.cls[k] < 255 && Math.abs(A.cls[k] - lv) <= sp);
+    if (add && A.sel) { for (let i = 0; i < reg.length; i++) if (reg[i]) A.sel[i] = 1; } else A.sel = reg;
+    S.ver++; return null;
+  };
+  AZ.ambWandErase = function (S, ci, cj) {
+    const A = S.amb, c0 = cj * S.gw + ci; if (!A || !A.sel || !A.sel[c0]) return 'No hay zona seleccionada en ese punto';
+    const reg = flood(S, c0, k => A.sel[k] === 1); for (let i = 0; i < reg.length; i++) if (reg[i]) A.sel[i] = 0; S.ver++; return null;
+  };
+  AZ.ambSelCount = S => (S.amb && S.amb.sel ? AZ.count(S.amb.sel) : 0);
+  AZ.ambSelClear = S => { if (S.amb) { S.amb.sel = null; S.ver++; } };
+  /* La selección pasa a ser Detección de zonas (infértil); se actualizan las hectáreas fértiles e infértiles */
+  AZ.ambSelToDet = function (S) {
+    const A = S.amb, n = NN(S); if (!A || !A.sel) return 0; let c = 0;
+    if (!S.badd || S.badd.length !== n) S.badd = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (A.sel[i] && S.inside[i]) { S.badd[i] = 1; if (S.berase) S.berase[i] = 0; c++; }
+    A.sel = null; AZ.mergeDet(S); return c;
   };
 
   /* ---- pincel / borrador: pintan celdas completas (respetan el tamaño de la grilla). n = diámetro en celdas ---- */

@@ -67,9 +67,10 @@
         drag.current = { t: 'brush', val, last: c0 }; cv.current.setPointerCapture(e.pointerId); stroke(c0, c0, val); redraw(); return;
       }
       if (t === 'wand') {
-        const L = S.hl.find(l => l.id === uiR.current.active);
-        if (!L) return api.toast('Elegí una capa de histograma para usar la varita');
-        const [ci, cj] = cellOf(w), msg = e.button === 2 ? AZ.wandErase(S, L, ci, cj) : AZ.wandSel(S, L, ci, cj, e.shiftKey || e.ctrlKey || e.metaKey, u.tol);
+        const L = S.hl.find(l => l.id === uiR.current.active), onAmb = uiR.current.active === 'amb' && S.amb;
+        if (!L && !onAmb) return api.toast('Elegí una capa de histograma o la Ambientación para usar la varita');
+        const [ci, cj] = cellOf(w), add = e.shiftKey || e.ctrlKey || e.metaKey;
+        const msg = onAmb ? (e.button === 2 ? AZ.ambWandErase(S, ci, cj) : AZ.ambWand(S, ci, cj, add)) : (e.button === 2 ? AZ.wandErase(S, L, ci, cj) : AZ.wandSel(S, L, ci, cj, add, u.tol));
         if (msg) api.toast(msg); api.refresh(); return;
       }
       if (e.button === 2) return;
