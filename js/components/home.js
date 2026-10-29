@@ -74,7 +74,7 @@
             <div className="ctxt"><b>${f.name}</b><span className="mu">${fmtHa(f.ha)}${f.inf != null ? ' · infértil ' + f1(f.inf, 1) + ' ha' : ''}</span>
               ${f.saved && html`<span className="ok-tag">Procesado · se abre al instante</span>`}
               <span className="mu">${f.updated ? 'Guardado ' + new Date(f.updated).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : 'Creado ' + new Date(f.created).toLocaleDateString('es-AR')}</span></div></button>
-          ${f.saved && html`<button type="button" className="lnk crep" aria-label=${'Reprocesar ' + f.name} title="Volver a cargar las fotos y procesar de nuevo" onClick=${() => ask('Se empieza de cero con las fotos del lote: el procesado guardado se reemplaza cuando vuelvas a guardar.', 'Reprocesar', '¿Reprocesar el lote?').then(ok => { if (ok) onOpen(f, true); })}>Reprocesar</button>`}
+          ${(f.saved || f.ha) && html`<button type="button" className="lnk crep" aria-label=${'Reprocesar ' + f.name} title="Volver a cargar las fotos y procesar de nuevo" onClick=${() => ask('Se empieza de cero con las fotos del lote: el procesado guardado se reemplaza cuando vuelvas a guardar.', 'Reprocesar', '¿Reprocesar el lote?').then(ok => { if (ok) onOpen(f, true); })}>Reprocesar</button>`}
           <button type="button" className="lnk cdel" aria-label=${'Eliminar ' + f.name} onClick=${() => ask('Se elimina el lote "' + f.name + '" del proyecto. Los archivos de las fotos no se borran.', 'Eliminar', '¿Eliminar lote?').then(ok => { if (ok) { AZApi.fields.remove(f.id); if (window.AZLot) window.AZLot.remove(f.id); setList(AZApi.fields.list(farm.id)); } })}><${Ic} n="trash" s=${14}/></button></article>`)}</div>
       </main>
       ${confirmNode}

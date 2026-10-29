@@ -559,10 +559,19 @@ def cmd_cells(args, job):
     return {'id': cid, 'gw': res['gw'], 'gh': res['gh'], 'cover_ha': res['cover_ha'], 'level': res['level'], 'samples': res['samples']}
 
 
+def cmd_export_tif(args, job):
+    """Exporta el ortomosaico como GeoTIFF recortado al límite. args: dir, out, poly (px nativos o None), shift (0 = original, 1 = 1/2…) o solo 'plan': true"""
+    import export_tif
+    d = args['dir']; meta = json.load(open(os.path.join(d, 'meta.json')))
+    if args.get('plan'):
+        return [dict(export_tif.plan(meta, args.get('poly'), k), shift=k) for k in range(0, min(5, meta['levels']))]
+    return export_tif.write(meta, d, args['out'], args.get('poly'), int(args.get('shift') or 0), progress=job.progress, cancel=job.cancel.is_set)
+
+
 # ----------------------------------------------------------------------------------------------- bucle principal
 
 COMMANDS = {'ping': lambda a, j: {'pong': True, 'version': os.environ.get('AGRO_VERSION'), 'python': sys.version.split()[0], 'docker': docker_ok(), 'rasterio': _has('rasterio')},
-            'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho, 'mosaic': cmd_mosaic, 'open_tiles': cmd_open_tiles, 'cells': cmd_cells}
+            'scan': cmd_scan, 'ortho': cmd_ortho, 'cancel': cmd_cancel, 'open_ortho': cmd_open_ortho, 'close_ortho': cmd_close_ortho, 'mosaic': cmd_mosaic, 'open_tiles': cmd_open_tiles, 'cells': cmd_cells, 'export_tif': cmd_export_tif}
 
 
 def _has(mod):

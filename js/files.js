@@ -99,6 +99,7 @@
     const poly = rot ? AZ.rotPts(poly0, rot, w0, h0, c.width, c.height) : poly0;
     const nd = base.ndviCanvas ? F.grayOf(F.rotateCanvas(base.ndviCanvas, rot)) : null;
     const keep = { det: S.meta.det.name, col: S.meta.det.color };
+    S.limUser = false;
     AZ.setImage(S, c, base.mpp, poly, { ndvi: nd, detailed: !!detailed });
     S.rot = rot || 0; S.geo = base.geo; S.meta.det.name = keep.det; S.meta.det.color = keep.col;
     AZ.prepare(S, gridM);
@@ -108,6 +109,7 @@
   /* Versión por mosaicos (escritorio): el motor calcula las celdas sobre los píxeles originales. Devuelve una promesa. */
   F.applyTiled = async function (S, base, gridM, rot, detailed, onProgress, cancel) {
     const keep = { det: S.meta.det.name, col: S.meta.det.color };
+    S.limUser = false;
     if (S.tiled !== base.tiled) AZ.setTiled(S, base.tiled, null, { detailed: !!detailed });
     S.detailed = !!detailed; AZ.tiledFrame(S, rot || 0);
     S.poly = AZ.tiledPoly(S, base.polyNative, rot || 0); S.geo = base.geo; S.meta.det.name = keep.det; S.meta.det.color = keep.col;

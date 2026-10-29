@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('agroDesktop', {
   system: () => ipcRenderer.invoke('app:system'),
   pickFolders: () => ipcRenderer.invoke('dialog:folders'),       // selección múltiple de carpetas
   pickFiles: () => ipcRenderer.invoke('dialog:files'),
+  pickSave: (name, ext, label) => ipcRenderer.invoke('dialog:save', name, ext, label),
   // Ejecuta un comando del motor. onEvent recibe {type:'progress'|'log', pct, msg}. Devuelve {id, done}: done se resuelve con {result} o {error}.
   engine: (cmd, args, onEvent) => {
     const id = ++seq; if (onEvent) cbs.set(id, onEvent);
@@ -22,7 +23,7 @@ contextBridge.exposeInMainWorld('agroDesktop', {
   reveal: p => ipcRenderer.invoke('shell:reveal', p),
   workdir: () => ipcRenderer.invoke('app:workdir'),
   examples: { save: (id, json) => ipcRenderer.invoke('ex:save', id, json), summary: () => ipcRenderer.invoke('ex:summary') },
-  lots: { save: (id, json, cells) => ipcRenderer.invoke('lot:save', id, json, cells), load: id => ipcRenderer.invoke('lot:load', id), has: id => ipcRenderer.invoke('lot:has', id), remove: id => ipcRenderer.invoke('lot:remove', id) },
+  lots: { save: (id, json, cells) => ipcRenderer.invoke('lot:save', id, json, cells), load: id => ipcRenderer.invoke('lot:load', id), has: id => ipcRenderer.invoke('lot:has', id), find: name => ipcRenderer.invoke('lot:find', name), remove: id => ipcRenderer.invoke('lot:remove', id) },
   onLog: cb => { logCbs.add(cb); return () => logCbs.delete(cb); },
   updates: {
     state: () => ipcRenderer.invoke('update:state'),

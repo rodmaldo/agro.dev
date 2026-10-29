@@ -58,6 +58,10 @@ for(const [st,re] of [[0,[/Tipo de im/,/RGB \+ Multiespectral/,/Par.metros avanz
 const S=mkS();
 [[420,330,1],[1130,640,1],[800,880,1],[300,500,-1],[900,200,-1],[1400,600,-1]].forEach(([x,y,v])=>{const [i,j]=AZ.cellAt(S,x,y);AZ.togglePoint(S,i,j,v)});
 AZ.detect(S,50,true);AZ.addManual(S);const [bi,bj]=AZ.cellAt(S,300,500);AZ.brush(S,'man',bi,bj,4,1);const hid=AZ.addHist(S),L=AZ.layerOf(S,hid);AZ.histRange(S,L,S.lim.exg[0],S.lim.exg[0]+0.05);AZ.setBuffer(S,true,10);
+// sin límite definido: no se muestran hectáreas fértiles / infértiles, solo el aviso y el dato adicional
+S.limUser=false;FORCE={tool:'pan'};ok('Dashboard sin límite',h(U.Dashboard,{user:'rodma',field,S,cfg,job,onLogout(){},onHome(){},onReconfig(){}}),/Todav.a no se defini. el l.mite/,/Superficie fotografiada por el dron/,/m.rgenes de seguridad/);
+{const html=require('react-dom/server').renderToStaticMarkup(h(U.Dashboard,{user:'rodma',field,S,cfg,job,onLogout(){},onHome(){},onReconfig(){}}));if(/Hect.reas f.rtiles/.test(html))throw new Error('no debe mostrar hectáreas fértiles sin límite');}
+S.limUser=true;
 for(const f of[{tool:'pan'},{tool:'wand',active:hid,exportOpen:true},{tool:'brush',active:'man',ba:true,ctx:{x:10,y:10},help:true}]){FORCE=f;
   ok('Dashboard '+Object.keys(f),h(U.Dashboard,{user:'rodma',field,S,cfg,job,onLogout(){},onHome(){},onReconfig(){}}),/Hect.reas f.rtiles/,/Hect.reas inf.rtiles/,/Ortomosaico original/,/Salitre/,/Buffer/,/Histograma 1/);}
 console.log('FIN');

@@ -96,6 +96,15 @@ class Frame:
         for p in photos:
             p['e'], p['n'] = self.to_enu(p['lat'], p['lon'])
 
+    @classmethod
+    def from_origin(cls, lat0, lon0):
+        """Mismo plano tangente, a partir de (lat0, lon0) guardados en meta.json (para exportar sin volver a leer las fotos)."""
+        f = cls.__new__(cls); f.lat0, f.lon0 = lat0, lon0; f.kx, f.ky = m_per_deg(lat0)
+        p0, l0 = math.radians(lat0), math.radians(lon0)
+        f.o = _ecef(lat0, lon0); f.ux = (-math.sin(l0), math.cos(l0), 0.0)
+        f.uy = (-math.sin(p0) * math.cos(l0), -math.sin(p0) * math.sin(l0), math.cos(p0)); f.uz = (math.cos(p0) * math.cos(l0), math.cos(p0) * math.sin(l0), math.sin(p0))
+        return f
+
     def to_enu(self, lat, lon):
         x, y, z = _ecef(lat, lon); d = (x - self.o[0], y - self.o[1], z - self.o[2])
         return (d[0] * self.ux[0] + d[1] * self.ux[1] + d[2] * self.ux[2], d[0] * self.uy[0] + d[1] * self.uy[1] + d[2] * self.uy[2])

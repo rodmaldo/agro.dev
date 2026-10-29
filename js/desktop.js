@@ -59,9 +59,15 @@
     return {
       tiled: { url: T.url, server: T.server, levels: T.levels, tile: T.tile, w0: T.w, h0: T.h, g, mppV, dir, photos: T.photos, seconds: T.seconds },
       polyNative: T.poly_px, mpp: mppV, geo: (T.exact ? { ...AZ.enuToGeo(T.lat0, T.lon0, cE, cN), lat0: T.lat0, lon0: T.lon0, cE, cN, exact: true, rtk } : { lat: T.lat0 + cN / T.ky, lon: T.lon0 + cE / T.kx, rtk }),
+      rtkN: T.rtk || 0, photos: T.photos,
       note: T.photos + ' fotos · ' + (g * 100).toFixed(1) + ' cm/px · ' + T.w.toLocaleString('es-AR') + '×' + T.h.toLocaleString('es-AR') + ' px · ' + T.seconds + ' s', canvas: null, timing: null
     };
   };
+
+  /* Exportar el ortomosaico como GeoTIFF recortado al límite. plan: opciones de resolución y tamaño; export: escribe el archivo. */
+  D.tifPlan = (dir, poly) => D.call('export_tif', { dir, poly, plan: true });
+  D.tifExport = (dir, out, poly, shift, onProgress, cancel) => D.call('export_tif', { dir, out, poly, shift }, onProgress, cancel);
+  D.pickSave = (name, ext, label) => api().pickSave(name, ext, label);
 
   /* Celdas de la grilla calculadas por el motor sobre los píxeles originales. Devuelve el ArrayBuffer binario. */
   D.cells = async function (T, spec, onProgress, cancel) {

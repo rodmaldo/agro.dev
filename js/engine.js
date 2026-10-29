@@ -12,7 +12,7 @@
     pts: [], poly: [], tmp: [], inside: null,
     det: new Uint8Array(0), buf: new Uint8Array(0), man: null, hl: [], seq: 0, rot: 0, mver: 0, capped: false,
     meta: { det: { name: 'Salitre', color: '#E69F00', vis: true, inc: true }, man: null, buf: { m: 0, on: false, color: '#56B4E9', vis: true, inc: true }, ortho: { vis: true, op: 100 }, sat: { vis: true, op: 100 } },
-    hasDet: false, idxName: 'exg', dist: null, _dv: -1,
+    hasDet: false, limUser: false, idxName: 'exg', dist: null, _dv: -1,
     geo: { lat: -33, lon: -61, rtk: false }, ver: 0, _oc: null
   });
   /* metros por grado de latitud (ky) y de longitud (kx), series WGS84 */
@@ -72,6 +72,11 @@
     const T = S.tiled, k = T.g / T.mppV;
     const q = polyNative.map(p => [p[0] * k, p[1] * k]);
     return rot ? AZ.rotPts(q, rot, T.w0 * k, T.h0 * k, S.W, S.H) : q;
+  };
+  /* límite del lote (marco de análisis) -> píxeles nativos del ortomosaico (inverso de tiledPoly) */
+  AZ.polyNative = function (S) {
+    const T = S.tiled, k = T.g / T.mppV, q = (S.rot || 0) ? AZ.rotPts(S.poly, -(S.rot || 0), S.W, S.H, T.w0 * k, T.h0 * k) : S.poly;
+    return q.map(p => [p[0] / k, p[1] / k]);
   };
   AZ.prepareGrid = function (S, gridM) { gridSize(S, gridM); };
   AZ.cellSpec = S => ({ cs: S.cs, W: S.W, H: S.H, mpp_v: S.mpp, theta: S.rot || 0, gw: S.gw, gh: S.gh });

@@ -40,7 +40,7 @@
       cfg, note: job.note || '', timing: job.timing || null, folders: job.folders || [],
       base: { dir: T.dir, rtk: cfg && cfg.prec === 'rtk', detailed: !!S.detailed },
       grid: { cs: S.cs, gw: S.gw, gh: S.gh, W: S.W, H: S.H, rot: S.rot || 0, mpp: S.mpp, capped: !!S.capped },
-      poly: S.poly, pts: S.pts, meta: S.meta, idxName: S.idxName, seq: S.seq, zord: S.zord || null, hasDet: !!S.hasDet,
+      poly: S.poly, limUser: !!S.limUser, pts: S.pts, meta: S.meta, idxName: S.idxName, seq: S.seq, zord: S.zord || null, hasDet: !!S.hasDet,
       masks: { auto: await L.pack(S.auto), badd: await L.pack(S.badd), berase: await L.pack(S.berase), man: await L.pack(S.man) }, hl: lay, amb, n: N
     };
   };
@@ -76,7 +76,7 @@
     AZ.setTiled(S, base.tiled, null, { detailed: snap.base.detailed });
     AZ.tiledFrame(S, g.rot);
     if (S.W !== g.W || S.H !== g.H) throw new Error('el ortomosaico no coincide con el guardado (' + S.W + '×' + S.H + ' vs ' + g.W + '×' + g.H + ')');
-    S.poly = snap.poly; S.geo = base.geo; S.cs = g.cs; S.gw = g.gw; S.gh = g.gh; S.capped = !!g.capped;
+    S.poly = snap.poly; S.limUser = snap.limUser != null ? !!snap.limUser : snap.stage === 'dash'; S.geo = base.geo; S.cs = g.cs; S.gw = g.gw; S.gh = g.gh; S.capped = !!g.capped;
     const keepMeta = snap.meta; S.meta = keepMeta;
     AZ.applyCells(S, cellsBuf.buffer ? cellsBuf.buffer.slice(cellsBuf.byteOffset, cellsBuf.byteOffset + cellsBuf.byteLength) : cellsBuf, snap.base.detailed);
     S.cellsBuf = cellsBuf.buffer ? cellsBuf.buffer.slice(cellsBuf.byteOffset, cellsBuf.byteOffset + cellsBuf.byteLength) : cellsBuf;
@@ -91,6 +91,17 @@
     if (S.auto || S.badd || S.berase) AZ.mergeDet(S); else S.det = new Uint8Array(N);
     S.hasDet = !!snap.hasDet; AZ.calcBuf(S); S.mver++; S.ver++;
     return { base, cfg: snap.cfg, stage: snap.stage, job: { note: snap.note || base.note, timing: snap.timing || null, folders: snap.folders || [], base, info: null, preset: null, presetDone: true } };
+  };
+
+  /* Lote procesado con una versión anterior (no tiene estado guardado): se reutiliza el ortomosaico que ya está en disco y solo se recalcula la grilla
+     (minutos, no la hora de armar el mosaico). Devuelve null si no hay ortomosaico de ese lote. */
+  L.recover = async function (S, field, openBase, applyTiled, onProgress) {
+    if (!L.available()) return null;
+    const dir = await root.agroDesktop.lots.find(field.name); if (!dir) return null;
+    const base = await openBase(dir, false), rtk = base.photos && base.rtkN >= base.photos * 0.5; base.geo.rtk = !!rtk;
+    const cfg = { kind: 'rgb', source: 'mosaic', ndvi: null, res: '3', quality: 'media', detail: 'norm', prec: rtk ? 'rtk' : 'gps', lat: base.geo.lat, lon: base.geo.lon, outRes: 'orig', gridM: 5, rot: 0, detName: 'Salitre', color: '#E69F00', sens: 50 };
+    await applyTiled(S, base, cfg.gridM, cfg.rot, false, onProgress);
+    return { base, cfg, stage: 'wizard', job: { note: base.note, timing: null, folders: [], base, info: null, preset: null, presetDone: true } };
   };
 
   /* Abre el lote guardado de un campo. Devuelve null si no hay nada guardado; lanza si está dañado o falta el ortomosaico. */

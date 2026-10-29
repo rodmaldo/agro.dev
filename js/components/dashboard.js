@@ -154,6 +154,7 @@
           ${amb && html`<div className="kv-box">${S.amb.rates.map((r, k) => html`<div className="kv" key=${k}><span><i className="sw" style=${{ background: S.amb.colors[k], display: 'inline-block', marginRight: 6 }}></i>Nivel ${k + 1}</span><span>${f1(+r || 0, 1)} ${c.unit}</span></div>`)}</div>
           <div className="mu">Las dosis de cada nivel se editan en la capa Ambientación (Capas → Propiedades).</div>`}
           <label className="tog"><input type="checkbox" checked=${!!ex.omitZero} onChange=${e => set({ omitZero: e.target.checked })}/><i></i><span>Omitir polígonos con dosis 0 (archivo más liviano)</span></label>
+          ${!S.limUser && html`<div className="note w">Todavía no definiste el límite del lote: las hectáreas y la prescripción incluyen los márgenes que fotografió el dron. Definí el límite (dibujado o KML) antes de exportar.</div>`}
           <div className="kv-box">
             <div className="kv"><span>Lote</span><span>${f1(c.loteHa)} ha</span></div>
             <div className="kv"><span>A tratar (dosis > 0${S.meta.buf.on ? ', sin buffer' : ''})</span><span>${f1(c.treatHa)} ha</span></div>
@@ -167,6 +168,37 @@
           <div className="note">Se combinan todas las capas incluidas. Mapa de prescripción: ${amb ? html`<b>cada nivel = su dosis</b>` : html`<b>fértil = dosis</b>`}, <b>infértil${S.meta.buf.on ? ' y buffer' : ''} = 0</b>. Se exporta un shapefile en la carpeta <b>Rx</b> (WGS84, columna RATE) para displays GEN4 / GEN5. Validá el archivo en el display con una prueba de campo antes de aplicar; no está verificado en equipos reales.</div>
         </div>
         <div className="mf"><button className="btn" type="button" onClick=${geo}>GeoJSON</button><button className="btn" type="button" onClick=${report}>Informe PDF</button><button className="btn pri" type="button" onClick=${prescription}>Prescripción (.zip)</button></div>
+      </div></div>`;
+  }
+
+  /* ---------- exportar ortomosaico (.tif) ---------- */
+  function TifDialog({ S, field, onClose, toast }) {
+    const [plan, setPlan] = useState(null), [shift, setShift] = useState(2), [clip, setClip] = useState(true), [prog, setProg] = useState(null), cancel = useRef({ v: false });
+    const T = S.tiled, poly = () => (clip && S.limUser ? AZ.polyNative(S) : null);
+    useEffect(() => { const k = e => { if (e.key === 'Escape' && !prog) onClose(); }; addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, [prog]);
+    useEffect(() => { let dead = false; AZDesktop.tifPlan(T.dir, poly()).then(p => { if (!dead) setPlan(p); }).catch(e => toast('No se pudo calcular el tamaño: ' + e.message)); return () => { dead = true; }; }, [clip]);
+    const opt = plan && (plan.find(p => p.shift === shift) || plan[plan.length - 1]);
+    const estMB = o => o ? Math.round(o.mpx * 0.55) : 0;           // ~0,5 MB por megapíxel (RGBA con deflate sobre imagen aérea)
+    const go = async () => {
+      const nm = 'ortomosaico_' + field.name.replace(/\W+/g, '_') + (clip && S.limUser ? '_delimitado' : '') + '.tif';
+      const out = await AZDesktop.pickSave(nm, 'tif', 'GeoTIFF'); if (!out) return;
+      cancel.current = { v: false }; setProg({ pct: 0, msg: 'Preparando…' });
+      try { const r = await AZDesktop.tifExport(T.dir, out, poly(), shift, (p, m) => setProg({ pct: p, msg: m }), cancel.current); toast('Ortomosaico exportado: ' + r.w.toLocaleString('es-AR') + '×' + r.h.toLocaleString('es-AR') + ' px · ' + Math.round(r.bytes / 1048576) + ' MB'); if (window.agroDesktop.reveal) window.agroDesktop.reveal(out); onClose(); }
+      catch (e) { setProg(null); toast(/cancelad/i.test(e.message) ? 'Exportación cancelada' : 'No se pudo exportar: ' + e.message); }
+    };
+    return html`<div className="veil" onPointerDown=${e => { if (e.target === e.currentTarget && !prog) onClose(); }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Exportar ortomosaico">
+        <div className="mh"><span>Exportar · ortomosaico (.tif)</span>${!prog && html`<button className="lnk" type="button" aria-label="Cerrar" onClick=${onClose}><${Ic} n="close" s=${14}/></button>`}</div>
+        <div className="mbody">
+          <label className="tog"><input type="checkbox" checked=${clip && S.limUser} disabled=${!S.limUser || !!prog} onChange=${e => setClip(e.target.checked)}/><i></i><span>Recortar al límite del lote (fuera del límite queda transparente)</span></label>
+          ${!S.limUser && html`<div className="note w">Todavía no definiste el límite del lote: se exporta todo lo fotografiado. Dibujalo o importá un KML para recortarlo.</div>`}
+          <label className="fld"><span className="fl">Resolución</span><select value=${shift} disabled=${!!prog} onChange=${e => setShift(+e.target.value)}>
+            ${(plan || []).map(p => html`<option key=${p.shift} value=${p.shift}>${f1(p.mpp * 100, 1)} cm/px · ${p.w.toLocaleString('es-AR')}×${p.h.toLocaleString('es-AR')} px · ~${estMB(p).toLocaleString('es-AR')} MB${p.shift === 0 ? ' (original)' : ''}${p.mpx > 600 ? ' · muy pesado' : ''}</option>`)}</select></label>
+          ${opt && opt.mpx > 600 && html`<div className="note w">Esta resolución es muy pesada (más de 600 megapíxeles): puede tardar y superar el límite de 4 GB del formato. Para compartir una referencia conviene una resolución menor.</div>`}
+          <div className="mu">GeoTIFF con georreferencia (WGS84, EPSG:4326): se abre en QGIS, Pix4D, John Deere Operations Center y similares. La imagen es idéntica al ortomosaico, sin recompresión con pérdida.</div>
+          ${prog && html`<div className="kv-box"><div className="pbar"><div style=${{ width: Math.round(prog.pct * 100) + '%', background: 'var(--ac, #b8f04a)' }}></div></div><div className="mu">${prog.msg}</div></div>`}
+        </div>
+        <div className="mf">${prog ? html`<button className="btn" type="button" onClick=${() => { cancel.current.v = true; }}>Cancelar</button>` : html`<button className="btn" type="button" onClick=${onClose}>Cerrar</button><button className="btn pri" type="button" disabled=${!opt} onClick=${go}>Exportar .tif</button>`}</div>
       </div></div>`;
   }
 
@@ -187,7 +219,7 @@
     const saveLot = () => (root.AZLot ? root.AZLot.save(S, { field, cfg, job, stage: 'dash', version: AZSys.VERSION }) : Promise.resolve(false));
     const saveLotR = useRef(saveLot); saveLotR.current = saveLot;
     useEffect(() => { const h = setTimeout(() => captureR.current(), 2500); return () => clearTimeout(h); }, []);
-    const goHome = () => ask('Volvés al proyecto. El lote queda guardado con todas sus capas y configuraciones y se abre al instante, sin procesar de nuevo.', 'Volver al proyecto', '¿Volver al proyecto?').then(async ok => { if (ok) { await saveLotR.current(); await captureR.current(); onHome(); } });
+    const goHome = async () => { await saveLotR.current(); await captureR.current(); onHome(); };      // el lote queda guardado y se reabre al instante
     const reconfig = () => ask('Reconfigurar la grilla reinicia la detección y las capas.', 'Reconfigurar', '¿Reconfigurar la grilla?').then(ok => { if (ok) onReconfig(); });
     const [rev, bump] = useReducer(x => x + 1, 0);
     useEffect(() => { if (rev === 0) return; const h = setTimeout(() => saveLotR.current(), 3000); return () => clearTimeout(h); }, [rev]);   // autoguardado 3 s después del último cambio
@@ -227,7 +259,7 @@
     /* ----- límite ----- */
     const polyChanged = () => { AZ.polyChanged(S); refresh(); };
     const closePoly = () => { if (S.tmp.length < 3) return toast('El límite necesita al menos 3 vértices'); S.poly = S.tmp; S.tmp = []; polyChanged(); setTool('edit'); };
-    const resetPoly = () => { S.poly = [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]]; polyChanged(); };
+    const resetPoly = () => { S.poly = [[0, 0], [S.W, 0], [S.W, S.H], [0, S.H]]; polyChanged(); S.limUser = false; refresh(); };
 
     /* ----- capas ----- */
     const addHistNamed = () => { const id = AZ.addHist(S, 'exg'); set({ active: id, sel: [id], tool: 'wand', heat: 1, ctx: null, add: null, tabB: 'props' }); refresh(); toast('Capa de histograma: fijá el rango en el histograma o usá la selección smart (Mayús suma zonas)'); };
@@ -294,7 +326,7 @@
     };
 
     const items = {
-      file: [{ t: 'Guardar proyecto', on: saveProject }, { t: 'Exportar prescripción / informe…', on: () => set({ exportOpen: true }) }, { sep: 1 }, { t: 'Reconfigurar grilla y puntos…', on: reconfig }, { t: 'Volver al proyecto', on: goHome }],
+      file: [{ t: 'Guardar proyecto', on: saveProject }, { t: 'Exportar prescripción / informe…', on: () => set({ exportOpen: true }) }, { t: 'Exportar ortomosaico (.tif)…', on: () => set({ tifOpen: true }), disabled: !(AZDesktop.available && S.tiled) }, { sep: 1 }, { t: 'Reconfigurar grilla y puntos…', on: reconfig }, { t: 'Volver al proyecto', on: goHome }],
       layers: [{ t: 'Combinar capas seleccionadas', on: combine, disabled: combinable.length < 2 && !sel.includes('buf'), k: 'Ctrl+E' }, { sep: 1 }, { t: 'Nueva capa · Histograma', on: addHist }, { t: 'Nueva capa · NDVI', on: addNdvi }, { t: 'Nueva capa · Ambientación', on: addAmb, disabled: !!S.amb }, { t: 'Nueva capa · Búfer', on: addBuf, disabled: M.buf.on }, { t: 'Detección manual', on: addMan, disabled: !!S.man }],
       view: [{ t: 'Imagen satelital', checked: ui.vis.sat, on: () => set({ vis: { ...ui.vis, sat: ui.vis.sat ? 0 : 1 } }) }, { t: 'Grilla', checked: ui.vis.grid, on: () => set({ vis: { ...ui.vis, grid: ui.vis.grid ? 0 : 1 } }), k: 'Espacio' },
         { t: 'Antes / después', checked: ui.ba, on: () => set({ ba: !ui.ba }), k: 'I' }, { t: 'Ajustar vista', on: () => mapApi.current.fit() }, { sep: 1 },
@@ -311,7 +343,7 @@
     return html`<div className="app">
       ${confirmNode}
       <header className="top">
-        <div className="brand">agro<i>.dev</i></div><button className="btn sm" type="button" onClick=${goHome} title="Volver al proyecto para abrir o cargar otro lote"><${Ic} n="back" s=${13}/> Proyecto</button><span className="crumb">${field.name}</span>
+        <div className="brand">agro<i>.dev</i></div><button className="btn sm" type="button" onClick=${goHome} title="Volver a los lotes del proyecto (este lote queda guardado)"><${Ic} n="home" s=${13}/> Inicio</button><span className="crumb">${field.name}</span>
         <${Menu} id="file" label="Archivo" open=${ui.menu} setOpen=${setMenu} items=${items.file}/>
         <${Menu} id="layers" label="Capas" open=${ui.menu} setOpen=${setMenu} items=${items.layers}/>
         <${Menu} id="view" label="Vista" open=${ui.menu} setOpen=${setMenu} items=${items.view}/>
@@ -327,13 +359,14 @@
           <div className="optbar"><b>${((TOOLS.find(t => t[0] === ui.tool) || [])[2] || '').replace(/ \(.\).*$/, '')}</b><span className="mu">${hint}</span>
             ${(ui.tool === 'brush' || ui.tool === 'erase') && html`<span className="opt">Tamaño ${ui.brushN} celdas · ${f1(ui.brushN * AZ.cellM(S), 1)} m</span>`}
             ${ui.tool === 'wand' && html`<span className="opt">Tolerancia ${ui.tol} %${ui.shift ? ' · modo SUMAR (+)' : ''}</span>`}</div>
-          <div className="mapbadge">${st ? html`<b>${f1(st.fer)}</b> ha fértil · <b>${f1(st.inf)}</b> ha ${M.det.name}` : ''}</div>
+          <div className="mapbadge">${st ? (S.limUser ? html`<b>${f1(st.fer)}</b> ha fértil · <b>${f1(st.inf)}</b> ha ${M.det.name}` : 'Definí el límite del lote para ver las hectáreas') : ''}</div>
         <//>
 
         <aside className="dock dr" aria-label="Panel de capas y funciones">
           <div className="tabs" role="tablist">${[['res', 'Resultados'], ['vista', 'Vista'], ['cur', 'Cursor']].map(([k, t]) => html`<button key=${k} type="button" role="tab" aria-selected=${ui.tabA === k} className=${ui.tabA === k ? 'on' : ''} onClick=${() => set({ tabA: k })}>${t}</button>`)}</div>
           <div className="tpane">
-            ${ui.tabA === 'res' && st && html`<div className="stat"><div className="k">Superficie relevada</div><div className="big">${f1(st.tot)}<small>ha</small></div><div className="mu">Lote delimitado: ${f1(st.lote)} ha</div></div>
+            ${ui.tabA === 'res' && st && html`
+              ${S.limUser ? html`<div className="stat"><div className="k">Lote delimitado</div><div className="big">${f1(st.lote)}<small>ha</small></div></div>
               <div className="stat"><div className="k"><i style=${{ background: 'var(--fer)' }}></i>Hectáreas fértiles</div><div className="big">${f1(st.fer)}<small>ha · ${f1(pc(st.fer))} %</small></div><div className="pbar"><div style=${{ width: pc(st.fer) + '%', background: 'var(--fer)' }}></div></div></div>
               <div className="stat"><div className="k"><i style=${{ background: M.det.color }}></i>Hectáreas infértiles</div><div className="big">${f1(st.inf)}<small>ha · ${f1(pc(st.inf))} %</small></div><div className="pbar"><div style=${{ width: pc(st.inf) + '%', background: M.det.color }}></div></div></div>
               <div className="stat"><div className="k">Promedios (${st.idxKey === 'ndvi' ? 'NDVI' : 'verdor ExG'})</div>
@@ -344,9 +377,13 @@
                 ${S.hl.map(l => html`<div className="kv" key=${l.id}><span>${l.name}</span><span>${f1(st.per[l.id])} ha</span></div>`)}
                 ${M.buf.on && html`<div className="kv"><span>Búfer ${f1(M.buf.m, 1)} m</span><span>${f1(st.buf)} ha</span></div>`}</div>
               <div className="stat"><label className="fld"><span className="fl">Rinde potencial (kg/ha)</span><input type="number" min="0" step="100" value=${ui.yld} onInput=${e => set({ yld: e.target.value })}/></label>
-                <div className="kv"><span>Pérdida estimada</span><span>${f1(st.inf * (+ui.yld || 0) / 1000)} t</span></div></div>
+                <div className="kv"><span>Pérdida estimada</span><span>${f1(st.inf * (+ui.yld || 0) / 1000)} t</span></div></div>` : html`<div className="stat"><div className="k">Hectáreas del lote</div>
+                <div className="mu">Todavía no se definió el límite del lote. Dibujalo o importá un KML/GeoJSON para ver las hectáreas fértiles e infértiles: sin el límite se contarían también los márgenes que fotografía el dron.</div>
+                <div className="row"><button className="btn pri sm" type="button" onClick=${() => { set({ active: 'lim', sel: ['lim'], tabB: 'props', tool: 'poly' }); }}>Dibujar límite</button></div></div>`}
               <${LearnBox} rev=${rev}/>
-              <div className="row"><button className="btn pri sm" type="button" onClick=${() => set({ exportOpen: true })}>Exportar…</button><button className="btn sm" type="button" onClick=${saveProject}>Guardar proyecto</button></div>`}
+              <div className="row"><button className="btn pri sm" type="button" onClick=${() => set({ exportOpen: true })}>Exportar…</button><button className="btn sm" type="button" onClick=${saveProject}>Guardar proyecto</button></div>
+              <div className="stat extra"><div className="k">Dato adicional</div><div className="kv"><span>Superficie fotografiada por el dron</span><span>${f1(st.tot)} ha</span></div>
+                <div className="mu">Incluye los márgenes de seguridad que deja el vuelo alrededor del lote: no es una medición del lote.</div></div>`}
             ${ui.tabA === 'vista' && html`<div className="pb">
               <${Slider} label="Opacidad ortomosaico" min=${10} max=${100} value=${ui.orthOp} unit=" %" onChange=${v => set({ orthOp: v })}/>
               <${Slider} label="Opacidad satélite" min=${0} max=${100} value=${ui.satOp} unit=" %" onChange=${v => set({ satOp: v })}/>
@@ -426,6 +463,7 @@
         <button type="button" className="mi" role="menuitem" onClick=${addHist}><span className="ck"></span><span>Nueva capa · Histograma</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" onClick=${addNdvi}><span className="ck"></span><span>Nueva capa · NDVI</span><kbd></kbd></button>
         <button type="button" className="mi" role="menuitem" disabled=${!!S.amb} onClick=${addAmb}><span className="ck"></span><span>Nueva capa · Ambientación</span><kbd></kbd></button></div>`}
+      ${ui.tifOpen && html`<${TifDialog} S=${S} field=${field} onClose=${() => set({ tifOpen: false })} toast=${toast}/>`}
       ${ui.exportOpen && html`<${ExportDialog} S=${S} field=${field} ex=${ex} setEx=${setEx} yld=${ui.yld} onClose=${() => set({ exportOpen: false })} toast=${toast}/>`}
       ${ui.help && html`<div className="veil" onPointerDown=${e => { if (e.target === e.currentTarget) set({ help: false }); }}><div className="login" style=${{ width: 420 }} role="dialog" aria-label="Atajos"><h2>Atajos de teclado</h2>
         <div className="kv"><span>Mover</span><kbd>V</kbd></div><div className="kv"><span>Pincel / Borrador</span><kbd>B / E</kbd></div><div className="kv"><span>Selección smart (Mayús suma)</span><kbd>W</kbd></div>

@@ -82,6 +82,7 @@ ipcMain.handle('app:system', () => ({ platform: process.platform, arch: process.
 function refocus() { if (win && !win.isDestroyed()) { win.focus(); win.webContents.focus(); } }
 ipcMain.handle('dialog:folders', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí una o varias carpetas del vuelo', properties: ['openDirectory', 'multiSelections'] }); setTimeout(refocus, 50); return r.canceled ? [] : r.filePaths; });
 ipcMain.handle('dialog:files', async () => { const r = await dialog.showOpenDialog(win, { title: 'Elegí archivos', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Imágenes', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff'] }] }); setTimeout(refocus, 50); return r.canceled ? [] : r.filePaths; });
+ipcMain.handle('dialog:save', async (_e, name, ext, label) => { const r = await dialog.showSaveDialog(win, { title: 'Guardar', defaultPath: path.join(app.getPath('documents'), String(name || 'agro-dev').replace(/[^\w.\- áéíóúñÁÉÍÓÚÑ]+/g, '_')), filters: [{ name: label || ext, extensions: [ext] }] }); setTimeout(refocus, 50); return r.canceled ? null : r.filePath; });
 ipcMain.handle('engine:call', (_e, id, cmd, args) => call(id, cmd, args));
 ipcMain.handle('engine:cancel', (_e, id) => call(--internalId, 'cancel', { target: id }));   // ids negativos: llamadas internas
 /* Informe PDF real: imprime el HTML en una ventana oculta y guarda el archivo que elija el usuario */
@@ -116,6 +117,16 @@ ipcMain.handle('lot:load', (_e, id) => {
   return { json: fs.readFileSync(j, 'utf8'), cells: cb ? new Uint8Array(cb.buffer, cb.byteOffset, cb.byteLength) : null };
 });
 ipcMain.handle('lot:has', (_e, id) => { try { return fs.existsSync(path.join(lotDir(id), 'estado.json')); } catch (e) { return false; } });
+/* Lotes procesados con versiones anteriores (sin estado guardado): se busca el ortomosaico más reciente con el nombre del lote para no volver a armarlo. */
+ipcMain.handle('lot:find', (_e, name) => {
+  const base = path.join(workdir(), 'ortomosaicos'); if (!fs.existsSync(base)) return null;
+  const pre = String(name || '').replace(/[^\w\-]+/g, '_') + '_'; let best = null, bt = -1;
+  for (const f of fs.readdirSync(base)) {
+    if (!f.startsWith(pre) || !/^\d+$/.test(f.slice(pre.length)) || !fs.existsSync(path.join(base, f, 'meta.json'))) continue;
+    const t = +f.slice(pre.length); if (t > bt) { bt = t; best = path.join(base, f); }
+  }
+  return best;
+});
 ipcMain.handle('lot:remove', (_e, id) => { try { fs.rmSync(lotDir(id), { recursive: true, force: true }); } catch (e) { } return true; });
 /* Biblioteca de ejemplos para el aprendizaje: Documentos/agro.dev/ejemplos/<lote>.json (un archivo por lote; se reemplaza al volver a guardar) */
 function exDir() { const d = path.join(workdir(), 'ejemplos'); fs.mkdirSync(d, { recursive: true }); return d; }

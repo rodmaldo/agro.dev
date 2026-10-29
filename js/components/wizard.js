@@ -12,7 +12,7 @@
   const AI_NAME = 'agro-tono · clasificador de tonalidad por celdas';
   const MIN = 5;
 
-  root.AZUI.Wizard = function Wizard({ user, field, job, S, cfg, setCfg, initStep, onBack, onDone, onLogout }) {
+  root.AZUI.Wizard = function Wizard({ user, field, job, S, cfg, setCfg, initStep, onBack, onDone, onLogout, onHome }) {
     const [step, setStep] = useState(initStep || 0);
     const [rev, bump] = useReducer(x => x + 1, 0);
     const [ui, setUi] = useState(baseUi); const uiR = useRef(ui); uiR.current = ui;
@@ -122,6 +122,7 @@
     };
     const api = { refresh: bump, set, toast, onPoint, closePoly, polyChanged };
 
+    const goInicio = async () => { if (root.AZLot && S.gw && S.tiled) { try { await root.AZLot.save(S, { field, cfg, job, stage: 'wizard', version: root.AZSys && root.AZSys.VERSION }); } catch (e) { } } onHome(); };
     const goStep = i => { if (i === 0) return onBack(); const t = i - 1; if (t < step) { entered.current = false; setStep(t); } };
     const next = () => { if (step === 0) process(); else if (step === 1 || step === 2) setStep(step + 1); };
     const stepIdx = step + 1;   // la barra incluye "Campo" como paso 0 ya hecho
@@ -134,6 +135,7 @@
 
     return html`<div className="screen">
       <header className="top"><button className="lnk" type="button" onClick=${onBack} aria-label="Volver a Campo"><${Ic} n="back" s=${16}/></button><div className="brand">agro<i>.dev</i></div><span className="crumb">${field.name}</span>
+        <button className="btn sm" type="button" onClick=${goInicio} title="Volver a los lotes del proyecto (el lote queda guardado)"><${Ic} n="home" s=${13}/> Inicio</button>
         <span className="grow"></span><${root.AZUI.GearBtn}/><span className="usr">${user}</span>${root.AZUI.LOGIN && html`<button className="lnk" type="button" onClick=${onLogout}>Salir</button>`}</header>
       <${StepBar} steps=${STEPS} cur=${stepIdx} onGo=${goStep}/>
 
@@ -235,7 +237,7 @@
           <div className="ai">
             <span className="fl">Procesamiento por IA</span>
             <div className="aiv"><i className=${'led ' + ai.st}></i><b>${AI_NAME}</b></div>
-            <div className="mu">${ai.st === 'run' ? 'Analizando tonalidades…' : ai.st === 'ok' ? 'Delimitó ' + (st ? f1(st.inf) + ' ha (' + f1(st.lote ? st.inf / st.lote * 100 : 0) + ' % del lote)' : '') : 'Esperando el primer punto positivo.'}</div>
+            <div className="mu">${ai.st === 'run' ? 'Analizando tonalidades…' : ai.st === 'ok' ? 'Delimitó ' + (st ? f1(st.inf) + ' ha' + (S.limUser ? ' (' + f1(st.lote ? st.inf / st.lote * 100 : 0) + ' % del lote)' : ' · definí el límite del lote para ver el porcentaje') : '') : 'Esperando el primer punto positivo.'}</div>
             <div className="mu">Compara la tonalidad (color, brillo, saturación, verdor) de cada celda con la de tus puntos y revalida en tiempo real.</div>
           </div>
           <${Slider} label="Sensibilidad" min=${0} max=${100} value=${cfg.sens} unit=" %" onChange=${() => { }} onCommit=${v => { sensR.current = v; up({ sens: v }); schedule(0); }}/>

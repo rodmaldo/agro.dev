@@ -31,13 +31,21 @@
     const enter = () => { const s = AZApi.session(); if (!AZUI.LOGIN) { setUser(''); setStage('home'); } else if (s) { setUser(s.user); setStage('home'); } else setStage('login'); };
     const logout = () => { AZApi.logout(); setUser(null); setFarm(null); setField(null); setJob(newJob()); S.current = AZ.newState(); setStage('splash'); };
     const openFarm = f => { setFarm(f); setStage('proj'); };
-    const [openErr, setOpenErr] = useState('');
+    const [openErr, setOpenErr] = useState(''), [openMsg, setOpenMsg] = useState('');
     /* Abrir un lote: si ya fue procesado y guardado, se restaura al instante (sin volver a procesar); si no, va a importar las fotos.
        fresh = true fuerza empezar de nuevo (reprocesar). */
     const openField = async (f, fresh) => {
       S.current = AZ.newState(); setJob(newJob()); setField(f); setCfg(null); setOpenErr('');
+      if (!fresh && window.AZLot && window.AZLot.available() && !(await window.AZLot.has(f.id))) {      // sin estado guardado (procesado con una versión anterior): reutiliza el ortomosaico en disco
+        setStage('opening'); setOpenMsg('Buscando el ortomosaico ya procesado de este lote…');
+        try {
+          const r = await window.AZLot.recover(S.current, f, window.AZDesktop.openBase, AZFiles.applyTiled, (p, m) => setOpenMsg(m || 'Calculando la grilla…'));
+          if (r) { setJob({ ...newJob(), ...r.job }); setCfg(r.cfg); setWkey(k => k + 1); window.AZLot.save(S.current, { field: f, cfg: r.cfg, job: r.job, stage: 'wizard' }); setStage('wizard'); return; }
+        } catch (e) { S.current = AZ.newState(); if (window.AZDesktop) window.AZDesktop.addLog('recuperar lote anterior: ' + e.message, 'Interfaz'); }
+        setStage('field'); return;
+      }
       if (!fresh && window.AZLot && await window.AZLot.has(f.id)) {
-        setStage('opening');
+        setStage('opening'); setOpenMsg('Abriendo el lote guardado…');
         try {
           const r = await window.AZLot.open(S.current, f, window.AZDesktop.openBase);
           if (r) { setJob({ ...newJob(), ...r.job }); setCfg(r.cfg); setWkey(k => k + 1); setStage(r.stage === 'wizard' ? 'wizard' : 'dash'); return; }
@@ -46,12 +54,12 @@
       setStage('field');
     };
 
-    if (stage === 'opening') return html`<div className="screen"><main className="proj"><section className="hcard"><h2>Abriendo "${field && field.name}"…</h2><p className="mu">Recuperando el lote guardado: no hace falta procesar de nuevo.</p></section></main></div>`;
+    if (stage === 'opening') return html`<div className="screen"><main className="proj"><section className="hcard"><h2>Abriendo "${field && field.name}"…</h2><p className="mu">${openMsg || 'Recuperando el lote guardado: no hace falta procesar de nuevo.'}</p></section></main></div>`;
     if (stage === 'home') return html`<${Home} user=${user} onOpenFarm=${openFarm} onLogout=${logout}/>`;
     if (stage === 'proj' && farm) return html`<${Project} user=${user} farm=${farm} onOpen=${openField} onBack=${() => setStage('home')} onLogout=${logout}/>`;
     if (stage === 'field') return html`<${Field} user=${user} field=${field} job=${job} setJob=${setJob} onBack=${() => setStage('proj')} openErr=${openErr} onNext=${() => { setCfg(initCfg(job.info, job.preset)); setWkey(k => k + 1); setStage('wizard'); }} onLogout=${logout}/>`;
     if (stage === 'wizard' && cfg) return html`<${Wizard} key=${wkey} user=${user} field=${field} job=${job} S=${S.current} cfg=${cfg} setCfg=${setCfg} initStep=${job.base ? 1 : 0}
-      onBack=${() => setStage('field')} onDone=${() => setStage('dash')} onLogout=${logout}/>`;
+      onBack=${() => setStage('field')} onDone=${() => setStage('dash')} onHome=${() => setStage('proj')} onLogout=${logout}/>`;
     if (stage === 'dash') return html`<${Dashboard} user=${user} field=${field} S=${S.current} cfg=${cfg} job=${job} onLogout=${logout} onHome=${() => setStage('proj')}
       onReconfig=${() => { setWkey(k => k + 1); setStage('wizard'); }}/>`;
     return html`<${Splash} phase=${stage} onEnter=${enter}>

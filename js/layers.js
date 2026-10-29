@@ -33,6 +33,7 @@
   };
 
   AZ.polyChanged = function (S) {
+    S.limUser = true;                 // el límite lo definió el usuario (dibujado, editado o importado): recién ahí las hectáreas son las del lote
     AZ.calcInside(S); AZ.calcLims(S);
     const n = NN(S), cut = m => { if (m) for (let i = 0; i < n; i++) if (!S.inside[i]) m[i] = 0; };
     cut(S.man); S.hl.forEach(l => { cut(l.mask); l.prev = null; l.range = null; });

@@ -316,3 +316,4 @@ input[type=range]:hover::-webkit-slider-thumb,input[type=range]:active::-webkit-
 .amb-t input{width:64px;text-align:right}.amb-t .sw{display:inline-block;width:14px;height:14px;border-radius:2px}
 .ok-tag{display:inline-block;font-size:11px;color:var(--ac,#9ad34a);border:1px solid currentColor;border-radius:3px;padding:0 5px;width:fit-content}
 .card .crep{position:absolute;right:38px;top:8px;font-size:11px}
+.stat.extra{opacity:.85;border-top:1px dashed var(--ln);padding-top:8px}

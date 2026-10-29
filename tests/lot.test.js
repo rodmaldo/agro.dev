@@ -19,6 +19,10 @@ const L = require('../js/lotstate.js');
   const h = AZ.addHist(S, 'exg', 'Mi histograma'); S.hl[0].mask[20] = 1; S.hl[0].mask[21] = 1; S.hl[0].range = [0.1, 0.2];
   AZ.addAmb(S); S.amb.rates = [0, 0, 20, 30, 40]; AZ.ambPalette(S, 'az');
   S.badd[30] = 1; S.berase[31] = 1; AZ.mergeDet(S); S.meta.det.name = 'Salitre fuerte'; S.zord = ['amb', 'det'];
+  // límite -> píxeles nativos del ortomosaico y de vuelta (para recortar el .tif exactamente al límite)
+  { const nat = [[400, 300], [3500, 500], [3000, 2600], [600, 2400]], keep = S.poly; S.poly = AZ.tiledPoly(S, nat, S.rot); const back = AZ.polyNative(S);
+    back.forEach((p, i) => assert(Math.hypot(p[0] - nat[i][0], p[1] - nat[i][1]) < 1e-6, 'polyNative')); S.poly = keep; }
+  S.limUser = true;
   const cfg = { gridM: 5, rot: 12.5, prec: 'rtk', detName: 'Salitre fuerte', color: '#E69F00' };
   const snap = await L.snapshot(S, { field: { id: 'f1', name: 'Lote 1' }, cfg, job: { note: 'n', timing: { seconds: 5 }, folders: ['/a'] }, stage: 'dash' });
   const json = JSON.stringify(snap); console.log('estado.json', (json.length / 1024).toFixed(0), 'KB para', N, 'celdas');
@@ -31,7 +35,7 @@ const L = require('../js/lotstate.js');
   eq(S.amb.cls, S2.amb.cls, 'ambientación'); assert.deepStrictEqual(S2.amb.rates, [0, 0, 20, 30, 40]); assert.strictEqual(S2.amb.pal, 'az');
   assert.deepStrictEqual(S2.pts, S.pts); assert.deepStrictEqual(S2.poly, S.poly); assert.deepStrictEqual(S2.zord, S.zord);
   assert.strictEqual(S2.meta.det.name, 'Salitre fuerte'); assert.strictEqual(S2.meta.buf.on, true); assert.strictEqual(S2.rot, 12.5); assert.strictEqual(S2.cs, S.cs);
-  eq(S.F, S2.F, 'características'); assert.strictEqual(S2.tiled.server, 'otro');
+  assert.strictEqual(S2.limUser, true); eq(S.F, S2.F, 'características'); assert.strictEqual(S2.tiled.server, 'otro');
   const a = AZ.stats(S), b = AZ.stats(S2); assert(Math.abs(a.inf - b.inf) < 1e-9 && Math.abs(a.lote - b.lote) < 1e-9);
   assert.strictEqual(r.stage, 'dash'); assert.deepStrictEqual(r.cfg, cfg); assert.strictEqual(r.job.folders[0], '/a');
   // un guardado de otra versión o dañado se rechaza con un mensaje claro
