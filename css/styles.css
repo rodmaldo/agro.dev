@@ -1,8 +1,12 @@
+@font-face{font-family:"Articulat CF";font-weight:400;font-style:normal;font-display:swap;src:local("Articulat CF Regular"),local("ArticulatCF-Regular"),url("../assets/fonts/ArticulatCF-Regular.woff2") format("woff2"),url("../assets/fonts/ArticulatCF-Regular.otf") format("opentype")}
+@font-face{font-family:"Articulat CF";font-weight:500;font-style:normal;font-display:swap;src:local("Articulat CF Medium"),local("ArticulatCF-Medium"),url("../assets/fonts/ArticulatCF-Medium.woff2") format("woff2"),url("../assets/fonts/ArticulatCF-Medium.otf") format("opentype")}
+@font-face{font-family:"Articulat CF";font-weight:600;font-style:normal;font-display:swap;src:local("Articulat CF Demi Bold"),local("ArticulatCF-DemiBold"),url("../assets/fonts/ArticulatCF-DemiBold.woff2") format("woff2"),url("../assets/fonts/ArticulatCF-DemiBold.otf") format("opentype")}
+@font-face{font-family:"Articulat CF";font-weight:700;font-style:normal;font-display:swap;src:local("Articulat CF Bold"),local("ArticulatCF-Bold"),url("../assets/fonts/ArticulatCF-Bold.woff2") format("woff2"),url("../assets/fonts/ArticulatCF-Bold.otf") format("opentype")}
 /* agro.dev — estilo minimalista: bordes finos, esquinas rectas, tipografía técnica */
-:root{--bg:#090b0a;--p1:#0f1210;--p2:#151916;--ln:#232b26;--ln2:#34403a;--tx:#e7ece8;--mu:#7e8b83;--ac:#b8f04a;--fer:#009E73;--bufc:#56B4E9;--sans:"Space Grotesk",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace;--wl:264px;--wr:292px}
+:root{--bg:#090b0a;--p1:#0f1210;--p2:#151916;--ln:#232b26;--ln2:#34403a;--tx:#e7ece8;--mu:#7e8b83;--ac:#b8f04a;--fer:#009E73;--bufc:#56B4E9;--sans:"Articulat CF","Segoe UI",system-ui,sans-serif;--mono:var(--sans);--wl:264px;--wr:292px}
 *{box-sizing:border-box;border-radius:0}
 html,body,#root{height:100%}
-body{margin:0;background:var(--bg);color:var(--tx);font:13px/1.45 var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--tx);font:13px/1.45 var(--sans);font-variant-numeric:tabular-nums;overflow:hidden;-webkit-font-smoothing:antialiased}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
 button:disabled{opacity:.4;cursor:not-allowed}
@@ -317,3 +321,10 @@ input[type=range]:hover::-webkit-slider-thumb,input[type=range]:active::-webkit-
 .ok-tag{display:inline-block;font-size:11px;color:var(--ac,#9ad34a);border:1px solid currentColor;border-radius:3px;padding:0 5px;width:fit-content}
 .card .crep{position:absolute;right:38px;top:8px;font-size:11px}
 .stat.extra{opacity:.85;border-top:1px dashed var(--ln);padding-top:8px}
+
+/* marca nueva */
+.splash .logo-big{position:relative;width:min(560px,78vw);height:auto;animation:logoIn .9s cubic-bezier(.2,.7,.2,1) both}
+@keyframes logoIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+.brand{display:inline-flex;align-items:center}.brand img{height:26px;width:auto;display:block}
+.logbox{font-family:ui-monospace,Consolas,Menlo,monospace}
+@media (prefers-reduced-motion:reduce){.splash .logo-big{animation:none}}

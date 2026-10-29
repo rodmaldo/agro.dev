@@ -352,7 +352,7 @@
     return html`<div className="app">
       ${confirmNode}
       <header className="top">
-        <div className="brand">agro<i>.dev</i></div><button className="btn sm" type="button" onClick=${goHome} title="Volver a los lotes del proyecto (este lote queda guardado)"><${Ic} n="home" s=${13}/> Inicio</button><span className="crumb">${field.name}</span>
+        <div className="brand"><img src="assets/brand/logo-negativo.png" alt="agro.dev"/></div><button className="btn sm" type="button" onClick=${goHome} title="Volver a los lotes del proyecto (este lote queda guardado)"><${Ic} n="home" s=${13}/> Inicio</button><span className="crumb">${field.name}</span>
         <${Menu} id="file" label="Archivo" open=${ui.menu} setOpen=${setMenu} items=${items.file}/>
         <${Menu} id="layers" label="Capas" open=${ui.menu} setOpen=${setMenu} items=${items.layers}/>
         <${Menu} id="view" label="Vista" open=${ui.menu} setOpen=${setMenu} items=${items.view}/>

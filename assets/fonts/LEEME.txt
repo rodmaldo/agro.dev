@@ -1,0 +1,6 @@
+Colocar aquí los archivos de Articulat CF (licencia comercial de Connary Fagen):
+ArticulatCF-Regular.woff2   (400)
+ArticulatCF-Medium.woff2    (500)
+ArticulatCF-DemiBold.woff2  (600)
+ArticulatCF-Bold.woff2      (700)
+(también se aceptan .otf/.ttf con el mismo nombre). Se empaquetan en el instalador.

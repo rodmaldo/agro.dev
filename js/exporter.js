@@ -248,7 +248,7 @@
     S.hl.forEach(l => layers.push(row(esc(l.name), fmt(st.per[l.id]) + ' ha', '')));
     const d = new Date().toLocaleDateString('es-AR');
     return '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Informe ' + esc(o.field) + '</title><style>' +
-      '@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:13px/1.45 "Space Grotesk",Arial,sans-serif;color:#111;margin:0}' +
+      '@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:13px/1.45 "Articulat CF","Segoe UI",Arial,sans-serif;color:#111;margin:0}' +
       'h1{font-size:22px;margin:0}h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid #111;padding-bottom:4px;margin:22px 0 8px}' +
       '.h{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #111;padding-bottom:8px}.m{color:#555;font-size:12px}' +
       'table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #ddd;padding:5px 6px;text-align:left}.n{text-align:right;font-variant-numeric:tabular-nums}' +
